@@ -810,25 +810,97 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
   // --- CRUD VARIABLE EXPENSES ---
   const addVariableExpense = (expense: Omit<VariableExpense, 'id'>) => {
+    const varId = `var-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    let cardPurchaseId: string | undefined = undefined;
+    let linkedPurchase: CardPurchase | null = null;
+
+    if (expense.paymentMethod === 'Cartão de Crédito' && expense.cardId) {
+      const purchaseDate = expense.purchaseDate || expense.date;
+      const firstDue = expense.firstDueDate || getCardFirstDueDate(purchaseDate, expense.cardId, data.creditCards);
+      cardPurchaseId = `pur-var-${varId}`;
+      linkedPurchase = {
+        id: cardPurchaseId,
+        cardId: expense.cardId,
+        description: expense.description,
+        category: expense.category,
+        totalValue: expense.value,
+        totalInstallments: expense.totalInstallments || 1,
+        purchaseDate: purchaseDate,
+        firstDueDate: firstDue
+      };
+    }
+
     const newExpense: VariableExpense = {
       ...expense,
-      id: `var-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+      id: varId,
+      cardPurchaseId
     };
-    setData(prev => ({
-      ...prev,
-      variableExpenses: [...prev.variableExpenses, newExpense]
-    }));
+
+    setData(prev => {
+      const purchases = linkedPurchase 
+        ? [...prev.cardPurchases, linkedPurchase] 
+        : prev.cardPurchases;
+      return {
+        ...prev,
+        variableExpenses: [...prev.variableExpenses, newExpense],
+        cardPurchases: purchases
+      };
+    });
+
     addAuditLog('ADICIONAR_REGISTRO', 'Contas Variáveis', `Despesa variável "${expense.description}" adicionada. Valor: R$ ${expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
 
   const updateVariableExpense = (id: string, updated: Partial<VariableExpense>) => {
     setData(prev => {
       const existing = prev.variableExpenses.find(v => v.id === id);
-      const updatedList = prev.variableExpenses.map(v => v.id === id ? { ...v, ...updated } : v);
-      if (existing) {
-        addAuditLog('ATUALIZAR_REGISTRO', 'Contas Variáveis', `Despesa variável "${existing.description}" atualizada.`);
+      if (!existing) return prev;
+
+      let nextCardPurchaseId = updated.cardPurchaseId !== undefined ? updated.cardPurchaseId : existing.cardPurchaseId;
+      let purchases = [...prev.cardPurchases];
+
+      const merged = { ...existing, ...updated };
+
+      // Remover compra vinculada se já existia, para re-lançar/atualizar
+      if (existing.cardPurchaseId) {
+        purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
+        nextCardPurchaseId = undefined;
       }
-      return { ...prev, variableExpenses: updatedList };
+
+      // Caso o método seja Cartão de Crédito e tenha cartão associado
+      let linkedPurchase: CardPurchase | null = null;
+      if (merged.paymentMethod === 'Cartão de Crédito' && merged.cardId) {
+        const purchaseDate = merged.purchaseDate || merged.date;
+        const firstDue = merged.firstDueDate || getCardFirstDueDate(purchaseDate, merged.cardId, prev.creditCards);
+        const purchaseId = existing.cardPurchaseId || `pur-var-${id}`;
+        nextCardPurchaseId = purchaseId;
+        linkedPurchase = {
+          id: purchaseId,
+          cardId: merged.cardId,
+          description: merged.description,
+          category: merged.category,
+          totalValue: merged.value,
+          totalInstallments: merged.totalInstallments || 1,
+          purchaseDate: purchaseDate,
+          firstDueDate: firstDue
+        };
+      }
+
+      if (linkedPurchase) {
+        purchases.push(linkedPurchase);
+      }
+
+      const updatedExpense = {
+        ...merged,
+        cardPurchaseId: nextCardPurchaseId
+      };
+
+      addAuditLog('ATUALIZAR_REGISTRO', 'Contas Variáveis', `Despesa variável "${existing.description}" atualizada.`);
+
+      return {
+        ...prev,
+        variableExpenses: prev.variableExpenses.map(v => v.id === id ? updatedExpense : v),
+        cardPurchases: purchases
+      };
     });
   };
 
@@ -838,9 +910,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Contas Variáveis', `Despesa variável "${existing.description}" excluída.`);
       }
+      let purchases = prev.cardPurchases;
+      if (existing && existing.cardPurchaseId) {
+        purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
+      }
       return {
         ...prev,
-        variableExpenses: prev.variableExpenses.filter(v => v.id !== id)
+        variableExpenses: prev.variableExpenses.filter(v => v.id !== id),
+        cardPurchases: purchases
       };
     });
   };

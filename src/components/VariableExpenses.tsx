@@ -5,8 +5,31 @@
 
 import React, { useState, useEffect } from 'react';
 import { useFinancial } from '../context/FinancialContext';
-import { VariableExpense } from '../types';
-import { Plus, Trash, Edit2, Check, X, Receipt, Filter, Search, Sparkles, PlusCircle } from 'lucide-react';
+import { VariableExpense, CreditCard } from '../types';
+import { Plus, Trash, Edit2, Check, X, Receipt, Filter, Search, Sparkles, PlusCircle, CreditCard as CardIcon } from 'lucide-react';
+
+const calculateCardFirstDueDate = (purchaseDateStr: string, cardId: string, creditCards: CreditCard[]): string => {
+  const card = creditCards.find(c => c.id === cardId);
+  if (!card) return purchaseDateStr;
+  if (!purchaseDateStr) return '';
+  const purchaseDate = new Date(purchaseDateStr + 'T00:00:00');
+  let year = purchaseDate.getFullYear();
+  let month = purchaseDate.getMonth(); // 0-11
+  const day = purchaseDate.getDate();
+
+  if (day > card.closingDay) {
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+
+  const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+  const finalDueDay = Math.min(card.dueDay, lastDayOfMonth);
+  const finalDate = new Date(year, month, finalDueDay);
+  return finalDate.toISOString().split('T')[0];
+};
 
 export default function VariableExpenses() {
   const { data, addVariableExpense, updateVariableExpense, deleteVariableExpense, selectedYear, selectedMonth } = useFinancial();
@@ -19,7 +42,14 @@ export default function VariableExpenses() {
   const [formValue, setFormValue] = useState<number | ''>('');
   const [formDate, setFormDate] = useState('');
   const [formDesc, setFormDesc] = useState('');
-  const [formPayMethod, setFormPayMethod] = useState('Cartão de Crédito');
+  const [formPayMethod, setFormPayMethod] = useState('Dinheiro');
+
+  // Novos estados para integração de Cartão de Crédito
+  const [formCardId, setFormCardId] = useState('');
+  const [formPurchaseDate, setFormPurchaseDate] = useState('');
+  const [formInstallments, setFormInstallments] = useState<number | ''>(1);
+  const [formFirstDueDate, setFormFirstDueDate] = useState('');
+  const [formObservation, setFormObservation] = useState('');
 
   // Filtros locais
   const [filterCategory, setFilterCategory] = useState('');
@@ -43,8 +73,40 @@ export default function VariableExpenses() {
   const categories = Object.keys(subcategoryMap);
 
   const paymentMethods = [
-    'Cartão de Crédito', 'Pix', 'Cartão de Débito', 'Dinheiro', 'Boleto', 'Débito Automático'
+    'Dinheiro',
+    'PIX',
+    'Débito',
+    'Transferência',
+    'Boleto',
+    'Cartão de Crédito'
   ];
+
+  const activeCards = data.creditCards.filter(c => c.isActive);
+
+  // Define um cartão padrão ao selecionar Cartão de Crédito
+  useEffect(() => {
+    if (formPayMethod === 'Cartão de Crédito' && !formCardId && activeCards.length > 0) {
+      setFormCardId(activeCards[0].id);
+    }
+  }, [formPayMethod, activeCards, formCardId]);
+
+  // Sincroniza data da compra com a data do gasto por padrão
+  useEffect(() => {
+    if (formPayMethod === 'Cartão de Crédito' && !formPurchaseDate && formDate) {
+      setFormPurchaseDate(formDate);
+    }
+  }, [formPayMethod, formDate, formPurchaseDate]);
+
+  // Calcula a data do primeiro vencimento automaticamente
+  useEffect(() => {
+    if (formPayMethod === 'Cartão de Crédito' && formCardId) {
+      const pDate = formPurchaseDate || formDate;
+      if (pDate) {
+        const autoDue = calculateCardFirstDueDate(pDate, formCardId, data.creditCards);
+        setFormFirstDueDate(autoDue);
+      }
+    }
+  }, [formPayMethod, formCardId, formPurchaseDate, formDate, data.creditCards]);
 
   // Sincroniza subcategoria padrão ao mudar categoria no form
   useEffect(() => {
@@ -62,6 +124,11 @@ export default function VariableExpenses() {
     setFormDate(v.date);
     setFormDesc(v.description);
     setFormPayMethod(v.paymentMethod);
+    setFormCardId(v.cardId || '');
+    setFormPurchaseDate(v.purchaseDate || v.date || '');
+    setFormInstallments(v.totalInstallments !== undefined ? v.totalInstallments : 1);
+    setFormFirstDueDate(v.firstDueDate || '');
+    setFormObservation(v.observation || '');
   };
 
   const resetForm = () => {
@@ -70,7 +137,12 @@ export default function VariableExpenses() {
     setFormValue('');
     setFormDate('');
     setFormDesc('');
-    setFormPayMethod('Cartão de Crédito');
+    setFormPayMethod('Dinheiro');
+    setFormCardId('');
+    setFormPurchaseDate('');
+    setFormInstallments(1);
+    setFormFirstDueDate('');
+    setFormObservation('');
     setEditingId(null);
   };
 
@@ -84,7 +156,21 @@ export default function VariableExpenses() {
       value: Number(formValue),
       date: formDate,
       description: formDesc,
-      paymentMethod: formPayMethod
+      paymentMethod: formPayMethod,
+      // Campos adicionais integrados para Cartão de Crédito
+      ...(formPayMethod === 'Cartão de Crédito' ? {
+        cardId: formCardId,
+        purchaseDate: formPurchaseDate || formDate,
+        totalInstallments: Number(formInstallments) || 1,
+        firstDueDate: formFirstDueDate,
+        observation: formObservation
+      } : {
+        cardId: undefined,
+        purchaseDate: undefined,
+        totalInstallments: undefined,
+        firstDueDate: undefined,
+        observation: undefined
+      })
     };
 
     if (editingId) {
@@ -186,46 +272,57 @@ export default function VariableExpenses() {
                   <p className="text-[10px] mt-0.5">Nenhuma despesa variável encontrada para os filtros selecionados.</p>
                 </div>
               ) : (
-                filteredExpenses.map(item => (
-                  <div
-                    key={item.id}
-                    className="p-4 border border-zinc-150 dark:border-zinc-850 bg-zinc-50/30 dark:bg-zinc-900/10 hover:bg-zinc-50 dark:hover:bg-zinc-900/30 rounded-xl flex items-center justify-between gap-4 transition-all"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 bg-amber-500 rounded-full shrink-0"></span>
-                        <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 truncate">{item.description}</p>
+                filteredExpenses.map(item => {
+                  const associatedCard = item.cardId ? data.creditCards.find(c => c.id === item.cardId) : null;
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-4 border border-zinc-150 dark:border-zinc-850 bg-zinc-50/30 dark:bg-zinc-900/10 hover:bg-zinc-50 dark:hover:bg-zinc-900/30 rounded-xl flex items-center justify-between gap-4 transition-all"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 bg-amber-500 rounded-full shrink-0"></span>
+                          <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 truncate">{item.description}</p>
+                        </div>
+                        <p className="text-[10px] text-zinc-500 mt-1 font-medium">
+                          Categoria: <strong className="text-zinc-700 dark:text-zinc-300">{item.category} ({item.subcategory})</strong> • Pagamento: {item.paymentMethod}
+                          {associatedCard && (
+                            <> • <strong className="text-indigo-600 dark:text-indigo-400">{associatedCard.bank} - {associatedCard.cardName}</strong> ({item.totalInstallments}x)</>
+                          )}
+                        </p>
+                        {item.observation && (
+                          <p className="text-[10px] text-zinc-400 dark:text-zinc-500 italic mt-1">
+                            Obs: {item.observation}
+                          </p>
+                        )}
                       </div>
-                      <p className="text-[10px] text-zinc-500 mt-1 font-medium">
-                        Categoria: <strong className="text-zinc-700 dark:text-zinc-300">{item.category} ({item.subcategory})</strong> • Pagamento: {item.paymentMethod}
-                      </p>
-                    </div>
 
-                    <div className="flex items-center gap-4 shrink-0">
-                      <div className="text-right">
-                        <p className="text-xs font-black text-rose-600 dark:text-rose-400">R$ {item.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-                        <p className="text-[9px] text-zinc-400 mt-0.5 font-mono">{new Date(item.date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
-                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <p className="text-xs font-black text-rose-600 dark:text-rose-400">R$ {item.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                          <p className="text-[9px] text-zinc-400 mt-0.5 font-mono">{new Date(item.date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
+                        </div>
 
-                      <div className="flex items-center gap-1 border-l border-zinc-200 dark:border-zinc-800 pl-4">
-                        <button
-                          onClick={() => handleStartEdit(item)}
-                          id={`btn-variable-edit-${item.id}`}
-                          className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => deleteVariableExpense(item.id)}
-                          id={`btn-variable-delete-${item.id}`}
-                          className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
-                        >
-                          <Trash className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 border-l border-zinc-200 dark:border-zinc-800 pl-4">
+                          <button
+                            onClick={() => handleStartEdit(item)}
+                            id={`btn-variable-edit-${item.id}`}
+                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteVariableExpense(item.id)}
+                            id={`btn-variable-delete-${item.id}`}
+                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                          >
+                            <Trash className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -328,6 +425,95 @@ export default function VariableExpenses() {
                 {paymentMethods.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
+
+            {formPayMethod === 'Cartão de Crédito' && (
+              <div id="credit-card-fields" className="p-3 bg-zinc-50 dark:bg-zinc-900/40 rounded-xl border border-zinc-150 dark:border-zinc-800 space-y-3">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
+                  <CardIcon className="w-3.5 h-3.5" />
+                  <span>Detalhes do Cartão de Crédito</span>
+                </div>
+
+                {activeCards.length === 0 ? (
+                  <div className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/30 font-medium">
+                    Nenhum cartão de crédito ativo encontrado. Cadastre um cartão de crédito no painel de Cartões de Crédito para ativar a integração.
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 mb-1">Cartão Utilizado</label>
+                      <select
+                        required
+                        value={formCardId}
+                        onChange={(e) => setFormCardId(e.target.value)}
+                        id="select-variable-card"
+                        className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                      >
+                        <option value="" disabled>Selecione um cartão</option>
+                        {activeCards.map(card => (
+                          <option key={card.id} value={card.id}>
+                            {card.bank} - {card.cardName} (Venc: dia {card.dueDay})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 mb-1">Data da Compra</label>
+                        <input
+                          required
+                          type="date"
+                          value={formPurchaseDate}
+                          onChange={(e) => setFormPurchaseDate(e.target.value)}
+                          id="input-variable-purchase-date"
+                          className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 mb-1">Qtd. de Parcelas</label>
+                        <input
+                          required
+                          type="number"
+                          min="1"
+                          value={formInstallments}
+                          onChange={(e) => setFormInstallments(e.target.value === '' ? '' : Number(e.target.value))}
+                          id="input-variable-installments"
+                          className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400">Data do Primeiro Vencimento</label>
+                        <span className="text-[9px] text-indigo-500 font-bold bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded-sm">Opcional / Auto</span>
+                      </div>
+                      <input
+                        type="date"
+                        value={formFirstDueDate}
+                        onChange={(e) => setFormFirstDueDate(e.target.value)}
+                        id="input-variable-first-due-date"
+                        placeholder="Calculado automaticamente"
+                        className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 dark:text-zinc-400 mb-1">Observações</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Notas sobre a compra..."
+                        value={formObservation}
+                        onChange={(e) => setFormObservation(e.target.value)}
+                        id="textarea-variable-observation"
+                        className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 resize-none"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             <button
               type="submit"

@@ -49,14 +49,20 @@ export interface VariableExpense {
   date: string; // YYYY-MM-DD
   description: string;
   paymentMethod: string;
+  cardId?: string;
+  purchaseDate?: string;
+  totalInstallments?: number;
+  firstDueDate?: string;
+  observation?: string;
+  cardPurchaseId?: string;
 }
 
 export interface Consignado {
   id: string;
   bank: string;
   contractNumber: string;
-  borrowedAmount: number; // Valor emprestado
-  interestRate: number; // Taxa de juros (ao ano ou mês)
+  borrowedAmount: number; // Valor emprestado / financiado
+  interestRate: number; // Taxa de juros (ao mês)
   loanDate: string; // YYYY-MM-DD
   firstPaymentDate: string; // YYYY-MM-DD
   totalInstallments: number; // Quantidade de parcelas
@@ -64,6 +70,24 @@ export interface Consignado {
   isPaid: boolean; // Quitado
   paidInstallmentsList?: number[]; // Lista de parcelas pagas (1-indexado)
   paymentConfirmationDates?: Record<number, string>; // data de confirmação para cada parcela
+  
+  // Novos campos avançados do Consignado
+  loanType?: string; // Tipo de Empréstimo
+  releasedAmount?: number; // Valor Liberado (líquido)
+  interestRateYearly?: number; // Taxa de juros ao ano (%)
+  amortizationSystem?: 'Price' | 'SAC' | 'Personalizado'; // Sistema de Amortização
+  dueDay?: number; // Dia de vencimento
+  cetRate?: number; // Custo Efetivo Total (%)
+  earlySettlementHistory?: Array<{
+    settlementDate: string;
+    paidValue: number;
+    interestDiscount: number;
+    interestPaid: number;
+    amortizationPaid: number;
+    economyAmount: number;
+    previousDebt: number;
+    finalDebt: number;
+  }>;
 }
 
 export interface CreditCard {
