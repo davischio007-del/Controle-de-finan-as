@@ -314,6 +314,20 @@ export const getInitialData = (): FinancialData => {
         value: 125000,
         description: 'Veículo seminovo'
       }
+    ],
+    fixedCategories: [
+      { id: 'fcat-1', name: 'Moradia', isActive: true, subcategories: ['Água', 'Energia', 'Internet', 'Condomínio', 'IPTU'] },
+      { id: 'fcat-2', name: 'Assinaturas', isActive: true, subcategories: ['Netflix', 'Spotify', 'Amazon Prime', 'Disney+'] },
+      { id: 'fcat-3', name: 'Educação', isActive: true, subcategories: ['Mensalidade', 'Livros', 'Cursos'] },
+      { id: 'fcat-4', name: 'Saúde', isActive: true, subcategories: ['Academia', 'Plano de Saúde', 'Medicamentos'] },
+      { id: 'fcat-5', name: 'Outros', isActive: true, subcategories: ['Diversos'] }
+    ],
+    variableCategories: [
+      { id: 'vcat-1', name: 'Veículo', isActive: true, subcategories: ['Combustível', 'Lavagem', 'Seguro', 'Oficina', 'IPVA'] },
+      { id: 'vcat-2', name: 'Mercado', isActive: true, subcategories: ['Alimentação', 'Higiene', 'Limpeza', 'Outros'] },
+      { id: 'vcat-3', name: 'Farmácia', isActive: true, subcategories: ['Medicamentos', 'Cosméticos', 'Outros'] },
+      { id: 'vcat-4', name: 'Lazer', isActive: true, subcategories: ['Alimentação', 'Cinema', 'Viagem', 'Shows'] },
+      { id: 'vcat-5', name: 'Pets', isActive: true, subcategories: ['Ração', 'Higiene', 'Veterinário'] }
     ]
   };
 };

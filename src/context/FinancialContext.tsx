@@ -18,7 +18,8 @@ import {
   PatrimonyItem,
   FinancialAlert,
   User,
-  AuditLog
+  AuditLog,
+  ExpenseCategory
 } from '../types';
 import { getInitialData } from '../utils/defaultData';
 import { hashPassword, generate2FASecret, getTOTPCode } from '../utils/security';
@@ -81,6 +82,15 @@ interface FinancialContextType {
   alerts: FinancialAlert[];
   importData: (imported: FinancialData) => boolean;
   clearAllData: () => void;
+
+  // Custom categories
+  addFixedCategory: (category: Omit<ExpenseCategory, 'id'>) => void;
+  updateFixedCategory: (id: string, category: Partial<ExpenseCategory>) => void;
+  deleteFixedCategory: (id: string) => void;
+
+  addVariableCategory: (category: Omit<ExpenseCategory, 'id'>) => void;
+  updateVariableCategory: (id: string, category: Partial<ExpenseCategory>) => void;
+  deleteVariableCategory: (id: string) => void;
   
   // Themes
   darkMode: boolean;
@@ -115,6 +125,28 @@ interface FinancialContextType {
 }
 
 const FinancialContext = createContext<FinancialContextType | undefined>(undefined);
+
+const getCardFirstDueDate = (purchaseDateStr: string, cardId: string, creditCards: CreditCard[]): string => {
+  const card = creditCards.find(c => c.id === cardId);
+  if (!card) return purchaseDateStr;
+  const purchaseDate = new Date(purchaseDateStr + 'T00:00:00');
+  let year = purchaseDate.getFullYear();
+  let month = purchaseDate.getMonth(); // 0-11
+  const day = purchaseDate.getDate();
+
+  if (day > card.closingDay) {
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+
+  const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+  const finalDueDay = Math.min(card.dueDay, lastDayOfMonth);
+  const finalDate = new Date(year, month, finalDueDay);
+  return finalDate.toISOString().split('T')[0];
+};
 
 export function FinancialProvider({ children }: { children: ReactNode }) {
   // Lista de Auditoria
@@ -227,29 +259,45 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
   // Inicialização de Estado de dados financeiros (dinâmico por usuário)
   const [data, setData] = useState<FinancialData>(() => {
+    let parsedData: FinancialData | null = null;
     const savedUser = localStorage.getItem('financ_current_user');
     if (savedUser) {
       try {
         const u = JSON.parse(savedUser) as User;
         const savedData = localStorage.getItem(`financ_data_v1_${u.username}`);
         if (savedData) {
-          return JSON.parse(savedData);
+          parsedData = JSON.parse(savedData);
         }
       } catch (e) {
         // ignore
       }
     }
     
-    // Fallback/Guest data
-    const saved = localStorage.getItem('financ_data_v1');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // ignore
+    if (!parsedData) {
+      // Fallback/Guest data
+      const saved = localStorage.getItem('financ_data_v1');
+      if (saved) {
+        try {
+          parsedData = JSON.parse(saved);
+        } catch (e) {
+          // ignore
+        }
       }
     }
-    return getInitialData();
+
+    if (!parsedData) {
+      parsedData = getInitialData();
+    }
+
+    // Hydrate default categories if missing
+    if (!parsedData.fixedCategories || parsedData.fixedCategories.length === 0) {
+      parsedData.fixedCategories = getInitialData().fixedCategories;
+    }
+    if (!parsedData.variableCategories || parsedData.variableCategories.length === 0) {
+      parsedData.variableCategories = getInitialData().variableCategories;
+    }
+
+    return parsedData;
   });
 
   const [selectedYear, setSelectedYear] = useState<number>(2026);
@@ -271,7 +319,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       const savedData = localStorage.getItem(`financ_data_v1_${currentUser.username}`);
       if (savedData) {
         try {
-          setData(JSON.parse(savedData));
+          const parsed = JSON.parse(savedData) as FinancialData;
+          if (!parsed.fixedCategories || parsed.fixedCategories.length === 0) {
+            parsed.fixedCategories = getInitialData().fixedCategories;
+          }
+          if (!parsed.variableCategories || parsed.variableCategories.length === 0) {
+            parsed.variableCategories = getInitialData().variableCategories;
+          }
+          setData(parsed);
         } catch (e) {
           setData(getInitialData());
         }
@@ -614,26 +669,98 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
   // --- CRUD FIXED EXPENSES ---
   const addFixedExpense = (expense: Omit<FixedExpense, 'id' | 'paidMonths'>) => {
+    const fixedId = `fix-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    let cardPurchaseId: string | undefined = undefined;
+    let linkedPurchase: CardPurchase | null = null;
+
+    if (expense.paymentMethod === 'Cartão' && expense.cardId && expense.purchaseDate) {
+      const firstDue = getCardFirstDueDate(expense.purchaseDate, expense.cardId, data.creditCards);
+      cardPurchaseId = `pur-fixed-${fixedId}`;
+      linkedPurchase = {
+        id: cardPurchaseId,
+        cardId: expense.cardId,
+        description: `Conta Fixa: ${expense.name}`,
+        category: expense.category,
+        totalValue: expense.value,
+        totalInstallments: 1,
+        purchaseDate: expense.purchaseDate,
+        firstDueDate: firstDue
+      };
+    }
+
     const newExpense: FixedExpense = {
       ...expense,
-      id: `fix-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      paidMonths: []
+      id: fixedId,
+      paidMonths: [],
+      cardPurchaseId
     };
-    setData(prev => ({
-      ...prev,
-      fixedExpenses: [...prev.fixedExpenses, newExpense]
-    }));
+
+    setData(prev => {
+      const purchases = linkedPurchase 
+        ? [...prev.cardPurchases, linkedPurchase] 
+        : prev.cardPurchases;
+      return {
+        ...prev,
+        fixedExpenses: [...prev.fixedExpenses, newExpense],
+        cardPurchases: purchases
+      };
+    });
+
     addAuditLog('ADICIONAR_REGISTRO', 'Contas Fixas', `Conta fixa "${expense.name}" adicionada. Valor: R$ ${expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
 
   const updateFixedExpense = (id: string, updated: Partial<FixedExpense>) => {
     setData(prev => {
       const existing = prev.fixedExpenses.find(f => f.id === id);
-      const updatedList = prev.fixedExpenses.map(f => f.id === id ? { ...f, ...updated } : f);
+      if (!existing) return prev;
+
+      let nextCardPurchaseId = updated.cardPurchaseId !== undefined ? updated.cardPurchaseId : existing.cardPurchaseId;
+      let purchases = [...prev.cardPurchases];
+
+      const merged = { ...existing, ...updated };
+
+      // Caso 1: Se já existia compra, remover antiga para re-lançar ou se mudou método
+      if (existing.cardPurchaseId) {
+        purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
+        nextCardPurchaseId = undefined;
+      }
+
+      // Caso 2: Novo método de pagamento é Cartão
+      let linkedPurchase: CardPurchase | null = null;
+      if (merged.paymentMethod === 'Cartão' && merged.cardId && merged.purchaseDate) {
+        const firstDue = getCardFirstDueDate(merged.purchaseDate, merged.cardId, prev.creditCards);
+        const purchaseId = existing.cardPurchaseId || `pur-fixed-${id}`;
+        nextCardPurchaseId = purchaseId;
+        linkedPurchase = {
+          id: purchaseId,
+          cardId: merged.cardId,
+          description: `Conta Fixa: ${merged.name}`,
+          category: merged.category,
+          totalValue: merged.value,
+          totalInstallments: 1,
+          purchaseDate: merged.purchaseDate,
+          firstDueDate: firstDue
+        };
+      }
+
+      if (linkedPurchase) {
+        purchases.push(linkedPurchase);
+      }
+
+      const updatedExpense = {
+        ...merged,
+        cardPurchaseId: nextCardPurchaseId
+      };
+
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Contas Fixas', `Conta fixa "${existing.name}" atualizada.`);
       }
-      return { ...prev, fixedExpenses: updatedList };
+
+      return {
+        ...prev,
+        fixedExpenses: prev.fixedExpenses.map(f => f.id === id ? updatedExpense : f),
+        cardPurchases: purchases
+      };
     });
   };
 
@@ -669,9 +796,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Contas Fixas', `Conta fixa "${existing.name}" excluída.`);
       }
+      let purchases = prev.cardPurchases;
+      if (existing && existing.cardPurchaseId) {
+        purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
+      }
       return {
         ...prev,
-        fixedExpenses: prev.fixedExpenses.filter(f => f.id !== id)
+        fixedExpenses: prev.fixedExpenses.filter(f => f.id !== id),
+        cardPurchases: purchases
       };
     });
   };
@@ -925,6 +1057,67 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // --- CRUD CATEGORIES ---
+  const addFixedCategory = (category: Omit<ExpenseCategory, 'id'>) => {
+    const newCat: ExpenseCategory = {
+      ...category,
+      id: `fcat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    };
+    setData(prev => ({
+      ...prev,
+      fixedCategories: [...(prev.fixedCategories || []), newCat]
+    }));
+    addAuditLog('ADICIONAR_REGISTRO', 'Categorias', `Categoria fixa "${category.name}" cadastrada.`);
+  };
+
+  const updateFixedCategory = (id: string, updated: Partial<ExpenseCategory>) => {
+    setData(prev => {
+      const list = prev.fixedCategories || [];
+      const updatedList = list.map(c => c.id === id ? { ...c, ...updated } : c);
+      return { ...prev, fixedCategories: updatedList };
+    });
+    addAuditLog('ATUALIZAR_REGISTRO', 'Categorias', `Categoria fixa atualizada.`);
+  };
+
+  const deleteFixedCategory = (id: string) => {
+    setData(prev => {
+      const list = prev.fixedCategories || [];
+      const filtered = list.filter(c => c.id !== id);
+      return { ...prev, fixedCategories: filtered };
+    });
+    addAuditLog('EXCLUIR_REGISTRO', 'Categorias', `Categoria fixa excluída.`);
+  };
+
+  const addVariableCategory = (category: Omit<ExpenseCategory, 'id'>) => {
+    const newCat: ExpenseCategory = {
+      ...category,
+      id: `vcat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
+    };
+    setData(prev => ({
+      ...prev,
+      variableCategories: [...(prev.variableCategories || []), newCat]
+    }));
+    addAuditLog('ADICIONAR_REGISTRO', 'Categorias', `Categoria variável "${category.name}" cadastrada.`);
+  };
+
+  const updateVariableCategory = (id: string, updated: Partial<ExpenseCategory>) => {
+    setData(prev => {
+      const list = prev.variableCategories || [];
+      const updatedList = list.map(c => c.id === id ? { ...c, ...updated } : c);
+      return { ...prev, variableCategories: updatedList };
+    });
+    addAuditLog('ATUALIZAR_REGISTRO', 'Categorias', `Categoria variável atualizada.`);
+  };
+
+  const deleteVariableCategory = (id: string) => {
+    setData(prev => {
+      const list = prev.variableCategories || [];
+      const filtered = list.filter(c => c.id !== id);
+      return { ...prev, variableCategories: filtered };
+    });
+    addAuditLog('EXCLUIR_REGISTRO', 'Categorias', `Categoria variável excluída.`);
+  };
+
   // --- EXPORT / IMPORT & RESET ---
   const importData = (imported: any): boolean => {
     try {
@@ -1137,6 +1330,12 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       addPatrimonyItem,
       updatePatrimonyItem,
       deletePatrimonyItem,
+      addFixedCategory,
+      updateFixedCategory,
+      deleteFixedCategory,
+      addVariableCategory,
+      updateVariableCategory,
+      deleteVariableCategory,
       alerts,
       importData,
       clearAllData,

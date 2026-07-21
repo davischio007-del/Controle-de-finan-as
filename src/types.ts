@@ -3,6 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+export interface SalaryDiscount {
+  id: string;
+  name: string;
+  value: number;
+  type: 'standard' | 'custom';
+}
+
 export interface Salary {
   id: string;
   description: string;
@@ -12,6 +19,7 @@ export interface Salary {
   year: number;
   month: number;
   observation: string;
+  discounts?: SalaryDiscount[];
 }
 
 export interface FixedExpense {
@@ -27,6 +35,10 @@ export interface FixedExpense {
   paymentMethod: string;
   // Para registrar pagamentos mês a mês de contas recorrentes
   paidMonths?: string[]; // Array de "YYYY-MM" que estão pagos
+  subcategory?: string;
+  cardId?: string;
+  purchaseDate?: string;
+  cardPurchaseId?: string;
 }
 
 export interface VariableExpense {
@@ -50,6 +62,8 @@ export interface Consignado {
   totalInstallments: number; // Quantidade de parcelas
   installmentValue: number; // Valor da parcela
   isPaid: boolean; // Quitado
+  paidInstallmentsList?: number[]; // Lista de parcelas pagas (1-indexado)
+  paymentConfirmationDates?: Record<number, string>; // data de confirmação para cada parcela
 }
 
 export interface CreditCard {
@@ -111,6 +125,13 @@ export interface FinancialAlert {
   dueDate?: string;
 }
 
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  isActive: boolean;
+  subcategories: string[];
+}
+
 export interface FinancialData {
   salaries: Salary[];
   fixedExpenses: FixedExpense[];
@@ -122,6 +143,8 @@ export interface FinancialData {
   emergencyFund: EmergencyFund;
   investments: Investment[];
   patrimonyItems: PatrimonyItem[];
+  fixedCategories?: ExpenseCategory[];
+  variableCategories?: ExpenseCategory[];
 }
 
 export interface User {

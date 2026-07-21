@@ -41,8 +41,60 @@ import {
 } from 'lucide-react';
 
 function DashboardShell() {
-  const { selectedYear, setSelectedYear, selectedMonth, setSelectedMonth, currentUser, logoutUser } = useFinancial();
+  const { data, updateConsignado, selectedYear, setSelectedYear, selectedMonth, setSelectedMonth, currentUser, logoutUser } = useFinancial();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'salaries' | 'fixed' | 'variable' | 'consignados' | 'cards' | 'investments' | 'reports' | 'users-admin'>('dashboard');
+
+  // Controle de prompt de consignados vencendo no mês atual
+  const [dismissedConsignadoPrompt, setDismissedConsignadoPrompt] = useState(false);
+
+  // Verificar parcelas de consignado com vencimento no mês atual
+  const dueConsignadoInstallments = React.useMemo(() => {
+    if (!data?.consignados) return [];
+    
+    const list: Array<{
+      loanId: string;
+      bank: string;
+      contractNumber: string;
+      installmentNumber: number;
+      totalInstallments: number;
+      value: number;
+      dueDate: string;
+    }> = [];
+
+    data.consignados.forEach(c => {
+      if (c.isPaid) return;
+      
+      const start = new Date(c.firstPaymentDate + 'T00:00:00');
+      const end = new Date(selectedYear, selectedMonth - 1, 1);
+      const diffMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+      const instNum = diffMonths + 1;
+
+      if (instNum >= 1 && instNum <= c.totalInstallments) {
+        const paidList = c.paidInstallmentsList || [];
+        if (!paidList.includes(instNum)) {
+          // Calcular vencimento exato desta parcela
+          const firstDate = new Date(c.firstPaymentDate + 'T00:00:00');
+          const targetDate = new Date(firstDate.getFullYear(), firstDate.getMonth() + (instNum - 1), firstDate.getDate());
+          const lastDayOfTargetMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate();
+          const clampedDay = Math.min(firstDate.getDate(), lastDayOfTargetMonth);
+          const finalDate = new Date(targetDate.getFullYear(), targetDate.getMonth(), clampedDay);
+          const dueDateStr = finalDate.toISOString().split('T')[0];
+
+          list.push({
+            loanId: c.id,
+            bank: c.bank,
+            contractNumber: c.contractNumber,
+            installmentNumber: instNum,
+            totalInstallments: c.totalInstallments,
+            value: c.installmentValue,
+            dueDate: dueDateStr
+          });
+        }
+      }
+    });
+
+    return list;
+  }, [data?.consignados, selectedYear, selectedMonth]);
 
   // Estados de modais overlays
   const [showSearch, setShowSearch] = useState(false);
@@ -257,6 +309,67 @@ function DashboardShell() {
         <div className="px-6 pt-4">
           <AlertsPanel />
         </div>
+
+        {/* PROMPT DE CONSIGNADOS VENCENDO NO MÊS (CONTROLE DE BOOT) */}
+        {dueConsignadoInstallments.length > 0 && !dismissedConsignadoPrompt && (
+          <div className="px-6 pt-4 animate-fade-in">
+            <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/30 p-4 rounded-2xl shadow-xs relative flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 rounded-lg shrink-0 mt-0.5">
+                  <BellRing className="w-5 h-5 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black text-amber-800 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                    Controle de Vencimentos: Parcelas de Consignados para {selectedMonth}/{selectedYear}
+                  </h4>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 font-semibold">
+                    Olá! Identificamos {dueConsignadoInstallments.length} {dueConsignadoInstallments.length === 1 ? 'prestação' : 'prestações'} de empréstimo consignado com vencimento neste mês. Deseja registrar a confirmação de pagamento?
+                  </p>
+                  
+                  {/* Lista de parcelas */}
+                  <div className="mt-2.5 space-y-2 text-[11px] text-amber-900/90 dark:text-amber-200/90">
+                    {dueConsignadoInstallments.map(inst => (
+                      <div key={`${inst.loanId}-${inst.installmentNumber}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 bg-white/50 dark:bg-zinc-900/40 p-2 rounded-lg border border-amber-100 dark:border-amber-900/20">
+                        <span>• <strong>{inst.bank}</strong> (Contrato: <code className="font-mono bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded text-[10px]">{inst.contractNumber}</code>)</span>
+                        <span className="bg-amber-100 dark:bg-amber-950 px-1.5 py-0.5 rounded text-[10px] font-black text-amber-800 dark:text-amber-400">Parcela {inst.installmentNumber}/{inst.totalInstallments}</span>
+                        <span>- Vence em: <strong>{new Date(inst.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</strong></span>
+                        <span>- Valor: <strong className="text-amber-700 dark:text-amber-400">R$ {inst.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></span>
+                        <button
+                          onClick={() => {
+                            const c = data.consignados.find(loan => loan.id === inst.loanId);
+                            if (!c) return;
+                            const nextPaidList = [...(c.paidInstallmentsList || []), inst.installmentNumber];
+                            const isNowFullyPaid = nextPaidList.length >= c.totalInstallments;
+                            const currentDates = c.paymentConfirmationDates || {};
+                            updateConsignado(inst.loanId, {
+                              paidInstallmentsList: nextPaidList,
+                              isPaid: isNowFullyPaid,
+                              paymentConfirmationDates: {
+                                ...currentDates,
+                                [inst.installmentNumber]: new Date().toISOString().split('T')[0]
+                              }
+                            });
+                          }}
+                          className="ml-auto md:ml-2 text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-2.5 py-1 rounded-md cursor-pointer transition-all shadow-xs"
+                        >
+                          Confirmar Pagamento
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setDismissedConsignadoPrompt(true)}
+                className="absolute top-4 right-4 md:static md:top-auto md:right-auto p-1.5 text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded-lg cursor-pointer transition-colors"
+                title="Dispensar"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* 3. CALENDÁRIO FINANCEIRO OVERLAY SLIDE-OUT */}
         {showCalendar && (
