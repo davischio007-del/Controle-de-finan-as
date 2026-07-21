@@ -1,0 +1,152 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+export interface Salary {
+  id: string;
+  description: string;
+  payor: string; // Fonte pagadora
+  value: number;
+  date: string; // YYYY-MM-DD
+  year: number;
+  month: number;
+  observation: string;
+}
+
+export interface FixedExpense {
+  id: string;
+  name: string;
+  category: string;
+  value: number;
+  dueDay: number;
+  isRecurring: boolean;
+  startDate: string; // YYYY-MM-DD
+  endDate?: string; // YYYY-MM-DD (opcional)
+  isPaid: boolean; // default status, or for current month
+  paymentMethod: string;
+  // Para registrar pagamentos mês a mês de contas recorrentes
+  paidMonths?: string[]; // Array de "YYYY-MM" que estão pagos
+}
+
+export interface VariableExpense {
+  id: string;
+  category: string;
+  subcategory: string;
+  value: number;
+  date: string; // YYYY-MM-DD
+  description: string;
+  paymentMethod: string;
+}
+
+export interface Consignado {
+  id: string;
+  bank: string;
+  contractNumber: string;
+  borrowedAmount: number; // Valor emprestado
+  interestRate: number; // Taxa de juros (ao ano ou mês)
+  loanDate: string; // YYYY-MM-DD
+  firstPaymentDate: string; // YYYY-MM-DD
+  totalInstallments: number; // Quantidade de parcelas
+  installmentValue: number; // Valor da parcela
+  isPaid: boolean; // Quitado
+}
+
+export interface CreditCard {
+  id: string;
+  bank: string;
+  cardName: string;
+  limit: number;
+  closingDay: number; // Dia de fechamento
+  dueDay: number; // Dia de vencimento
+  isActive: boolean;
+}
+
+export interface CardPurchase {
+  id: string;
+  cardId: string;
+  description: string;
+  category: string;
+  totalValue: number;
+  totalInstallments: number; // Parcelas (ex: 12)
+  purchaseDate: string; // YYYY-MM-DD
+  firstDueDate: string; // YYYY-MM-DD (Primeiro vencimento)
+}
+
+export interface SavingsGoal {
+  id: string;
+  targetAmount: number;
+  targetMonth: string; // YYYY-MM
+  notes?: string;
+}
+
+export interface EmergencyFund {
+  targetValue: number;
+  currentValue: number;
+}
+
+export interface Investment {
+  id: string;
+  type: 'Tesouro' | 'CDB' | 'Ações' | 'FIIs' | 'Poupança' | 'Outros';
+  name: string;
+  value: number;
+  yieldRate?: string; // Taxa de rendimento (ex: 100% CDI, 12% a.a.)
+  date: string; // YYYY-MM-DD
+}
+
+export interface PatrimonyItem {
+  id: string;
+  name: string;
+  type: 'Imóvel' | 'Veículo' | 'Outro Bem';
+  value: number;
+  description?: string;
+}
+
+export interface FinancialAlert {
+  id: string;
+  type: 'vencendo' | 'atrasado' | 'fechamento_cartao' | 'limite_cartao' | 'consignado_proximo' | 'parcelas_terminando';
+  title: string;
+  description: string;
+  severity: 'info' | 'warning' | 'danger';
+  dueDate?: string;
+}
+
+export interface FinancialData {
+  salaries: Salary[];
+  fixedExpenses: FixedExpense[];
+  variableExpenses: VariableExpense[];
+  consignados: Consignado[];
+  creditCards: CreditCard[];
+  cardPurchases: CardPurchase[];
+  savingsGoals: SavingsGoal[];
+  emergencyFund: EmergencyFund;
+  investments: Investment[];
+  patrimonyItems: PatrimonyItem[];
+}
+
+export interface User {
+  fullName: string;
+  username: string;
+  password?: string;
+  email?: string;
+  role: 'admin' | 'user';
+  active: boolean; // Situação (Ativo/Inativo)
+  createdAt: string;
+  lastLoginAt?: string;
+  lastLoginIp?: string;
+  failedLoginAttempts: number;
+  lockedUntil?: string; // Bloqueio temporário
+  twoFactorEnabled?: boolean;
+  twoFactorSecret?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  username: string;
+  timestamp: string;
+  operation: string;
+  module: string;
+  details: string;
+  ip?: string;
+}
+
