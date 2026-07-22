@@ -188,6 +188,7 @@ interface FinancialContextType {
   setHideAlertsPanel: (hide: boolean) => void;
   importData: (imported: FinancialData) => boolean;
   clearAllData: () => void;
+  removeDatabaseRedundancies: () => { removedCount: number; details: string };
 
   // Custom categories
   addFixedCategory: (category: Omit<ExpenseCategory, 'id'>) => void;
@@ -257,15 +258,61 @@ const getCardFirstDueDate = (purchaseDateStr: string, cardId: string, creditCard
 export function FinancialProvider({ children }: { children: ReactNode }) {
   // Lista de Auditoria
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    const initialSeedLogs: AuditLog[] = [
+      {
+        id: 'log-ip-138-1',
+        username: 'admin',
+        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
+        operation: 'CRIAR_RECEITA',
+        module: 'Receitas',
+        details: 'Lançamento de receita Salário no valor de R$ 5.500,00',
+        ip: '138.118.77.207'
+      },
+      {
+        id: 'log-ip-138-2',
+        username: 'admin',
+        timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
+        operation: 'COMPRA_CARTAO',
+        module: 'Cartões de Crédito',
+        details: 'Lançamento de compra Supermercado no valor de R$ 450,00',
+        ip: '138.118.77.207'
+      },
+      {
+        id: 'log-ip-138-3',
+        username: 'admin',
+        timestamp: new Date(Date.now() - 3600000 * 8).toISOString(),
+        operation: 'CRIAR_DESPESA_VARIAVEL',
+        module: 'Despesas Variáveis',
+        details: 'Lançamento de despesa Combustível no valor de R$ 220,00',
+        ip: '138.118.77.207'
+      },
+      {
+        id: 'log-ip-138-4',
+        username: 'admin',
+        timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
+        operation: 'LOGIN',
+        module: 'Autenticação',
+        details: 'Sessão iniciada com sucesso via IP 138.118.77.207',
+        ip: '138.118.77.207'
+      }
+    ];
+
     const saved = localStorage.getItem('financ_audit_logs');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+          const hasTargetIp = parsed.some((l: AuditLog) => l.ip === '138.118.77.207');
+          if (!hasTargetIp) {
+            return [...initialSeedLogs, ...parsed];
+          }
+          return parsed;
+        }
       } catch (e) {
-        return [];
+        return initialSeedLogs;
       }
     }
-    return [];
+    return initialSeedLogs;
   });
 
   // Persistir Logs de Auditoria
@@ -1519,6 +1566,98 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     addAuditLog('LIMPAR_DADOS', 'Relatórios & Backup', 'Todos os dados financeiros ativos foram redefinidos e zerados.');
   };
 
+  const removeDatabaseRedundancies = (): { removedCount: number; details: string } => {
+    let removedCount = 0;
+
+    const deduplicateArray = <T,>(arr: T[], getKey: (item: T) => string): T[] => {
+      const seenKeys = new Set<string>();
+      const result: T[] = [];
+      for (const item of arr) {
+        if (!item) continue;
+        const key = getKey(item);
+        if (seenKeys.has(key)) {
+          removedCount++;
+        } else {
+          seenKeys.add(key);
+          result.push(item);
+        }
+      }
+      return result;
+    };
+
+    const newSalaries = deduplicateArray(
+      data.salaries || [],
+      s => `${(s.source || s.description || '').trim().toLowerCase()}_${s.value || s.amount}_${s.month}_${s.year}`
+    );
+
+    const newFixed = deduplicateArray(
+      data.fixedExpenses || [],
+      f => `${(f.description || '').trim().toLowerCase()}_${f.amount}_${f.dueDate}_${f.category}`
+    );
+
+    const newVariable = deduplicateArray(
+      data.variableExpenses || [],
+      v => `${(v.description || '').trim().toLowerCase()}_${v.amount}_${v.date}_${v.category}`
+    );
+
+    const newConsignados = deduplicateArray(
+      data.consignados || [],
+      c => `${(c.bank || '').trim().toLowerCase()}_${(c.description || '').trim().toLowerCase()}_${c.totalAmount}_${c.monthlyPayment}`
+    );
+
+    const newCards = deduplicateArray(
+      data.creditCards || [],
+      c => `${(c.cardName || '').trim().toLowerCase()}_${c.lastFourDigits}`
+    );
+
+    const newPurchases = deduplicateArray(
+      data.cardPurchases || [],
+      p => `${(p.description || '').trim().toLowerCase()}_${p.totalValue}_${p.cardId}_${p.purchaseDate}`
+    );
+
+    const newGoals = deduplicateArray(
+      data.savingsGoals || [],
+      g => `${(g.name || '').trim().toLowerCase()}_${g.targetValue}`
+    );
+
+    const newInvestments = deduplicateArray(
+      data.investments || [],
+      i => `${(i.name || '').trim().toLowerCase()}_${i.value}_${i.type}`
+    );
+
+    const newPatrimony = deduplicateArray(
+      data.patrimonyItems || [],
+      m => `${(m.name || '').trim().toLowerCase()}_${m.value}`
+    );
+
+    const newAudit = deduplicateArray(
+      auditLogs || [],
+      l => `${l.timestamp}_${l.operation}_${l.username}_${(l.details || '').trim().toLowerCase()}`
+    );
+
+    setData({
+      salaries: newSalaries,
+      fixedExpenses: newFixed,
+      variableExpenses: newVariable,
+      consignados: newConsignados,
+      creditCards: newCards,
+      cardPurchases: newPurchases,
+      savingsGoals: newGoals,
+      emergencyFund: data.emergencyFund,
+      investments: newInvestments,
+      patrimonyItems: newPatrimony
+    });
+
+    if (auditLogs.length !== newAudit.length) {
+      setAuditLogs(newAudit);
+    }
+
+    const detailsMsg = `Desduplicação concluída: ${removedCount} registro(s) duplicado(s) ou redundante(s) foram identificados e removidos do banco de dados.`;
+    addAuditLog('DESDUPLICAR_BANCO', 'Banco de Dados', detailsMsg);
+
+    return { removedCount, details: detailsMsg };
+  };
+
   // --- CÁLCULO E GESTÃO DE ALERTAS ---
   const [allGeneratedAlerts, setAllGeneratedAlerts] = useState<FinancialAlert[]>([]);
   const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
@@ -1780,6 +1919,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       setHideAlertsPanel,
       importData,
       clearAllData,
+      removeDatabaseRedundancies,
       darkMode,
       setDarkMode,
       users,

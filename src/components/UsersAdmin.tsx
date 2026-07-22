@@ -27,7 +27,10 @@ import {
   Smartphone,
   RefreshCw,
   SlidersHorizontal,
-  Unlock
+  Unlock,
+  Database,
+  Sparkles,
+  Filter
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -36,11 +39,12 @@ export default function UsersAdmin() {
     users, 
     currentUser, 
     registerUser, 
-    updateUser, 
+updateUser, 
     deleteUser, 
     changeUserPassword,
     auditLogs,
-    clearAuditLogs
+    clearAuditLogs,
+    removeDatabaseRedundancies
   } = useFinancial();
   
   // Estados para o formulário de cadastro
@@ -74,6 +78,8 @@ export default function UsersAdmin() {
   const [auditSearch, setAuditSearch] = useState('');
   const [auditFilterUser, setAuditFilterUser] = useState('all');
   const [auditFilterModule, setAuditFilterModule] = useState('all');
+  const [auditFilterIp, setAuditFilterIp] = useState('all');
+  const [dedupStatus, setDedupStatus] = useState<string | null>(null);
 
   // Manipular cadastro
   const handleRegister = (e: React.FormEvent) => {
@@ -198,17 +204,20 @@ export default function UsersAdmin() {
     const matchesSearch = 
       log.details.toLowerCase().includes(auditSearch.toLowerCase()) ||
       log.operation.toLowerCase().includes(auditSearch.toLowerCase()) ||
-      log.username.toLowerCase().includes(auditSearch.toLowerCase());
+      log.username.toLowerCase().includes(auditSearch.toLowerCase()) ||
+      (log.ip && log.ip.toLowerCase().includes(auditSearch.toLowerCase()));
     
     const matchesUser = auditFilterUser === 'all' || log.username.toLowerCase() === auditFilterUser.toLowerCase();
     const matchesModule = auditFilterModule === 'all' || log.module === auditFilterModule;
+    const matchesIp = auditFilterIp === 'all' || (log.ip || '127.0.0.1') === auditFilterIp;
 
-    return matchesSearch && matchesUser && matchesModule;
+    return matchesSearch && matchesUser && matchesModule && matchesIp;
   });
 
-  // Lista única de usuários e módulos para filtros de auditoria
+  // Lista única de usuários, módulos e IPs para filtros de auditoria
   const uniqueAuditUsers = Array.from(new Set(auditLogs.map(l => l.username)));
   const uniqueAuditModules = Array.from(new Set(auditLogs.map(l => l.module)));
+  const uniqueAuditIps = Array.from(new Set(auditLogs.map(l => l.ip || '127.0.0.1')));
 
   return (
     <div className="space-y-6">
@@ -787,7 +796,34 @@ export default function UsersAdmin() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                const res = removeDatabaseRedundancies();
+                setDedupStatus(res.details);
+                setTimeout(() => setDedupStatus(null), 8000);
+              }}
+              id="btn-deduplicate-db"
+              className="text-[10px] font-bold px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200/60 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-300 rounded-lg hover:bg-indigo-100/60 dark:hover:bg-indigo-900/50 cursor-pointer transition-colors flex items-center gap-1.5 shadow-2xs"
+              title="Remover todos os registros duplicados e redundâncias do banco de dados"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              Desduplicar Banco (Sem Redundância)
+            </button>
+
+            <button
+              onClick={() => {
+                setAuditSearch('138.118.77.207');
+                setAuditFilterIp('138.118.77.207');
+              }}
+              id="btn-filter-target-ip"
+              className="text-[10px] font-bold px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/40 text-emerald-700 dark:text-emerald-300 rounded-lg hover:bg-emerald-100/60 dark:hover:bg-emerald-900/50 cursor-pointer transition-colors flex items-center gap-1.5 shadow-2xs"
+              title="Filtrar e recuperar todos os lançamentos efetuados no IP 138.118.77.207"
+            >
+              <Filter className="w-3.5 h-3.5 text-emerald-500" />
+              IP 138.118.77.207
+            </button>
+
             <button
               onClick={() => {
                 if (window.confirm('Tem certeza de que deseja limpar todos os registros de auditoria e segurança do sistema?')) {
@@ -801,19 +837,27 @@ export default function UsersAdmin() {
           </div>
         </div>
 
+        {/* FEEDBACK DE DESDUPLICAÇÃO */}
+        {dedupStatus && (
+          <div className="mb-4 p-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl text-xs font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-2 animate-fadeIn">
+            <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>{dedupStatus}</span>
+          </div>
+        )}
+
         {/* FILTROS DA AUDITORIA */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
           
           {/* Busca Geral */}
           <div>
             <label className="block text-[9px] font-extrabold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-1">
-              Busca nos Logs
+              Busca nos Logs / IP
             </label>
             <input
               type="text"
               value={auditSearch}
               onChange={(e) => setAuditSearch(e.target.value)}
-              placeholder="Buscar por termo ou ação..."
+              placeholder="Buscar por termo, ação ou IP (ex: 138.118.77.207)..."
               className="w-full px-3 py-1.5 text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
             />
           </div>
@@ -848,6 +892,23 @@ export default function UsersAdmin() {
               <option value="all">Todos os módulos</option>
               {uniqueAuditModules.map(module => (
                 <option key={module} value={module}>{module}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Filtrar por IP */}
+          <div>
+            <label className="block text-[9px] font-extrabold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-1">
+              Filtrar por IP
+            </label>
+            <select
+              value={auditFilterIp}
+              onChange={(e) => setAuditFilterIp(e.target.value)}
+              className="w-full px-3 py-1.5 text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg focus:outline-hidden"
+            >
+              <option value="all">Todos os IPs</option>
+              {uniqueAuditIps.map(ip => (
+                <option key={ip} value={ip}>{ip}</option>
               ))}
             </select>
           </div>
