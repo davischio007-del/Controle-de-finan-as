@@ -106,7 +106,7 @@ export default function Login() {
     }
   };
 
-  const handleForgotPasswordSubmit = (e: React.FormEvent) => {
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRecoverySuccessMessage(null);
     setRecoveryErrorMessage(null);
@@ -116,12 +116,19 @@ export default function Login() {
       return;
     }
 
-    const res = forgotPassword(recoveryTerm);
-    if (res.success) {
-      setRecoverySuccessMessage(res.message);
-      setRecoveryTerm('');
-    } else {
-      setRecoveryErrorMessage(res.message);
+    setIsLoading(true);
+    try {
+      const res = await forgotPassword(recoveryTerm);
+      if (res.success) {
+        setRecoverySuccessMessage(res.message);
+        setRecoveryTerm('');
+      } else {
+        setRecoveryErrorMessage(res.message);
+      }
+    } catch (err: any) {
+      setRecoveryErrorMessage(err?.message || 'Falha ao solicitar recuperação no Firebase.');
+    } finally {
+      setIsLoading(false);
     }
   };
 

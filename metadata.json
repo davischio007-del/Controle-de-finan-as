@@ -1,5 +1,5 @@
 {
-  "name": "Controle Financeiro Pessoal",
+  "name": "Organizador Financeiro",
   "description": "Sistema completo para gestão financeira pessoal com controle de salários, despesas fixas e variáveis, empréstimos consignados, parcelamentos de cartões de crédito e investimentos.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

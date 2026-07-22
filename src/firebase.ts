@@ -2,12 +2,15 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   setPersistence,
-  browserLocalPersistence
+  browserLocalPersistence,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from 'firebase/auth';
 import {
   getFirestore,
   doc,
-  getDocFromServer
+  getDocFromServer,
+  setDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
@@ -82,3 +85,50 @@ export async function testFirestoreConnection() {
     }
   }
 }
+
+// Inicializador automático para garantir a existência do usuário Admin no Firebase Auth + Firestore
+export async function ensureAdminUserCreated() {
+  const adminEmail = 'admin@financpro.com';
+  const adminPassword = 'admin';
+
+  try {
+    let userCredential;
+    try {
+      userCredential = await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
+    } catch (err: any) {
+      const code = err?.code;
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        try {
+          userCredential = await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
+        } catch {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (userCredential?.user) {
+      const uid = userCredential.user.uid;
+      const userRef = doc(db, 'users', uid);
+      const snap = await getDocFromServer(userRef).catch(() => null);
+      if (!snap || !snap.exists()) {
+        await setDoc(userRef, {
+          uid,
+          fullName: 'Administrador',
+          username: 'admin',
+          email: adminEmail,
+          role: 'admin',
+          active: true,
+          createdAt: new Date().toISOString(),
+          failedLoginAttempts: 0
+        }, { merge: true });
+      }
+    }
+  } catch (e) {
+    console.warn('Auto-inicialização de admin finalizada ou tratada:', e);
+  }
+}
+
+// Executa em segundo plano para provisionar automaticamente no carregamento da aplicação
+ensureAdminUserCreated();

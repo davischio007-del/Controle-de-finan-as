@@ -29,6 +29,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   User as FirebaseUser
 } from 'firebase/auth';
 import {
@@ -584,61 +585,84 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     const emailToUse = cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@financpro.com`;
 
     try {
-      // 1. Tentar fazer login no Firebase Auth
+      // 1. Autenticação direta no Firebase Auth usando signInWithEmailAndPassword
       let userCredential;
       try {
         userCredential = await signInWithEmailAndPassword(auth, emailToUse, passwordInput);
       } catch (authErr: any) {
-        // Se usuário não existir no Firebase Auth, criar automaticamente para os logins de teste/padrão
-        if (
-          authErr?.code === 'auth/user-not-found' ||
-          authErr?.code === 'auth/invalid-credential' ||
-          authErr?.code === 'auth/wrong-password'
-        ) {
-          // Se for senha incorreta para conta existente
-          if (authErr?.code === 'auth/wrong-password') {
-            return { success: false, error: 'Senha incorreta.' };
-          }
+        const errCode = authErr?.code || '';
 
-          // Criar conta no Firebase Auth se não existir
+        // Se o usuário não existe no Firebase Auth, cria a conta (primeiro acesso)
+        if (errCode === 'auth/user-not-found' || (cleanUsername === 'admin' && (errCode === 'auth/invalid-credential' || errCode === 'auth/wrong-password'))) {
           try {
             userCredential = await createUserWithEmailAndPassword(auth, emailToUse, passwordInput);
           } catch (createErr: any) {
-            return { success: false, error: 'Credenciais inválidas ou erro ao autenticar no Firebase.' };
+            const createCode = createErr?.code || '';
+            if (createCode === 'auth/email-already-in-use') {
+              return { success: false, error: 'Senha incorreta.' };
+            }
+            if (createCode === 'auth/network-request-failed') {
+              return { success: false, error: 'Erro de conexão.' };
+            }
+            return { success: false, error: 'Senha incorreta.' };
           }
+        } else if (errCode === 'auth/user-not-found') {
+          return { success: false, error: 'Usuário não encontrado.' };
+        } else if (errCode === 'auth/wrong-password' || errCode === 'auth/invalid-credential') {
+          return { success: false, error: 'Senha incorreta.' };
+        } else if (errCode === 'auth/network-request-failed') {
+          return { success: false, error: 'Erro de conexão.' };
+        } else if (errCode === 'permission-denied') {
+          return { success: false, error: 'Usuário sem permissão.' };
         } else {
-          return { success: false, error: 'Erro de autenticação no Firebase: ' + (authErr?.message || authErr) };
+          return { success: false, error: authErr?.message || 'Erro de autenticação no Firebase.' };
         }
       }
 
       const fbUser = userCredential.user;
       const uid = fbUser.uid;
 
-      // 2. Verificar perfil em /users/{uid}
+      // 2. Buscar/Criar perfil de administrador no Firestore (/users/{UID})
       const userDocRef = doc(db, 'users', uid);
-      const userSnap = await getDoc(userDocRef);
       let userProfile: User;
 
-      if (userSnap.exists()) {
-        userProfile = { uid, ...userSnap.data() } as User;
-      } else {
-        const isAdminUser = cleanUsername === 'admin';
+      try {
+        const userSnap = await getDoc(userDocRef);
+        if (userSnap.exists()) {
+          userProfile = { uid, ...userSnap.data() } as User;
+        } else {
+          const isAdminUser = cleanUsername === 'admin' || emailToUse.includes('admin');
+          userProfile = {
+            uid,
+            fullName: isAdminUser ? 'Administrador' : cleanUsername,
+            username: cleanUsername,
+            email: emailToUse,
+            role: isAdminUser ? 'admin' : 'user',
+            active: true,
+            createdAt: new Date().toISOString(),
+            failedLoginAttempts: 0
+          };
+          await setDoc(userDocRef, userProfile);
+        }
+      } catch (dbErr: any) {
+        if (dbErr?.code === 'permission-denied') {
+          return { success: false, error: 'Usuário sem permissão.' };
+        }
         userProfile = {
           uid,
-          fullName: isAdminUser ? 'Administrador Geral' : cleanUsername,
+          fullName: cleanUsername === 'admin' ? 'Administrador' : cleanUsername,
           username: cleanUsername,
           email: emailToUse,
-          role: isAdminUser ? 'admin' : 'user',
+          role: cleanUsername === 'admin' ? 'admin' : 'user',
           active: true,
           createdAt: new Date().toISOString(),
           failedLoginAttempts: 0
         };
-        await setDoc(userDocRef, userProfile);
       }
 
       if (userProfile.active === false) {
         await signOut(auth);
-        return { success: false, error: 'Esta conta está inativada pelo administrador.' };
+        return { success: false, error: 'Usuário sem permissão.' };
       }
 
       // Verificar 2FA se habilitado
@@ -658,13 +682,21 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         lastLoginIp: localStorage.getItem('financ_user_ip') || '127.0.0.1'
       };
 
-      await setDoc(userDocRef, updatedUser, { merge: true });
+      try {
+        await setDoc(userDocRef, updatedUser, { merge: true });
+      } catch {
+        // ignore
+      }
+
       setCurrentUser(updatedUser);
 
-      addAuditLog('LOGIN', 'Autenticação', `Sessão iniciada no Firebase Auth (${updatedUser.username})`);
+      addAuditLog('LOGIN', 'Autenticação', `Sessão iniciada com sucesso via Firebase Auth (UID: ${uid})`);
       return { success: true };
     } catch (err: any) {
       console.error('Erro no login:', err);
+      if (err?.code === 'auth/network-request-failed') {
+        return { success: false, error: 'Erro de conexão.' };
+      }
       return { success: false, error: err?.message || 'Erro ao efetuar login.' };
     }
   };
@@ -781,12 +813,22 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     const term = usernameOrEmail.trim().toLowerCase();
     const targetEmail = term.includes('@') ? term : `${term}@financpro.com`;
 
-    addAuditLog('SOLICITACAO_RECOVERY', 'Autenticação', `Solicitação de redefinição para ${targetEmail}`);
-
-    return { 
-      success: true, 
-      message: `Sucesso! Se o e-mail estiver cadastrado, as instruções de recuperação do Firebase foram enviadas para: ${targetEmail}` 
-    };
+    try {
+      await sendPasswordResetEmail(auth, targetEmail);
+      addAuditLog('SOLICITACAO_RECOVERY', 'Autenticação', `Link de recuperação de senha enviado para ${targetEmail}`);
+      return { 
+        success: true, 
+        message: `Instruções e link oficial do Firebase Auth enviados para: ${targetEmail}. Verifique sua caixa de entrada e spam.` 
+      };
+    } catch (err: any) {
+      addAuditLog('ERRO_RECOVERY', 'Autenticação', `Erro na solicitação de redefinição para ${targetEmail}: ${err?.message}`);
+      return { 
+        success: false, 
+        message: err?.code === 'auth/user-not-found'
+          ? `Usuário/E-mail não encontrado no Firebase Auth (${targetEmail}). Se utilizou o login 'admin', informe seu e-mail cadastrado.`
+          : `Alerta do Firebase Auth: ${err?.message || 'Não foi possível enviar o e-mail de redefinição.'}`
+      };
+    }
   };
 
   // --- CRUD SALARIES ---

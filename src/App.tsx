@@ -172,7 +172,7 @@ function DashboardShell() {
               F
             </div>
             <div>
-              <h1 className="text-sm font-black tracking-tight text-zinc-900 dark:text-white">Finanças Pro</h1>
+              <h1 className="text-sm font-black tracking-tight text-zinc-900 dark:text-white">Organizador Financeiro</h1>
               <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Gestor de Orçamento</p>
             </div>
           </div>
