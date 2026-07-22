@@ -1077,7 +1077,7 @@ export default function Consignados({ targetBankFilter }: ConsignadosProps = {})
                           </div>
 
                           <div>
-                            <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Saldo Devedor Residual</span>
+                            <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Valor Presente</span>
                             <span className="font-black text-rose-600 dark:text-rose-400">R$ {item.totalRemainingAmortization.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                             <span className="text-[9px] text-zinc-400 block font-medium">Contrato original: R$ {item.initialContractValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                           </div>
@@ -1101,29 +1101,9 @@ export default function Consignados({ targetBankFilter }: ConsignadosProps = {})
                           </div>
                         </div>
 
-                        {/* Botão para Expandir Detalhes / Amortização */}
+                        {/* Botão para Acessar Tabela / Amortização */}
                         <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-850 flex justify-between items-center gap-2 flex-wrap">
                           <div className="flex items-center gap-3">
-                            <button
-                              onClick={() => {
-                                if (expandAllTables) setExpandAllTables(false);
-                                setExpandedLoanId(isExpanded ? null : item.id);
-                              }}
-                              className="flex items-center gap-1.5 text-[11px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-900/40"
-                            >
-                              {isExpanded ? (
-                                <>
-                                  <ChevronUp className="w-4 h-4" />
-                                  Ocultar Tabela de Parcelas
-                                </>
-                              ) : (
-                                <>
-                                  <ChevronDown className="w-4 h-4" />
-                                  Visualizar Tabela de Parcelas (Amortização)
-                                </>
-                              )}
-                            </button>
-
                             <button
                               onClick={() => setScheduleModalLoan(item)}
                               className="flex items-center gap-1.5 text-[11px] font-black text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 cursor-pointer bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800 transition-colors"
@@ -1604,7 +1584,7 @@ export default function Consignados({ targetBankFilter }: ConsignadosProps = {})
               Simulador Contábil de Quitação Antecipada
             </h3>
             <p className="text-xs text-zinc-500 font-medium mt-1">
-              Selecione o contrato e a data em que pretende simular a liquidação antecipada do saldo residual. O sistema remove os juros não transcorridos e calcula o valor real de liquidação e a sua economia líquida.
+              Selecione o contrato e a data em que pretende simular a liquidação antecipada do valor presente (saldo devedor). O sistema remove os juros não transcorridos e calcula o valor real de liquidação e a sua economia líquida.
             </p>
           </div>
 

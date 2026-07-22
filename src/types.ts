@@ -94,6 +94,7 @@ export interface CreditCard {
   id: string;
   bank: string;
   cardName: string;
+  category?: string; // Categoria do Cartão (ex: Uso Pessoal, Corporativo, Alimentação/Benefícios, Milhas, Família)
   limit: number;
   closingDay: number; // Dia de fechamento
   dueDay: number; // Dia de vencimento

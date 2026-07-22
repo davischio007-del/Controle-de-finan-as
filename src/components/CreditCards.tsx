@@ -9,7 +9,7 @@ import { CreditCard, CardPurchase } from '../types';
 import { 
   Plus, Trash, Edit2, Check, X, CreditCard as CardIcon, 
   Calendar, Percent, Sparkles, Filter, ChevronDown, ChevronUp, 
-  TrendingUp, BarChart3, HelpCircle, AlertCircle
+  TrendingUp, BarChart3, HelpCircle, AlertCircle, Tag
 } from 'lucide-react';
 
 export default function CreditCards() {
@@ -36,6 +36,8 @@ export default function CreditCards() {
   // Campos do Cartão
   const [formCardBank, setFormCardBank] = useState('Nubank');
   const [formCardName, setFormCardName] = useState('');
+  const [formCardCategory, setFormCardCategory] = useState('Uso Pessoal');
+  const [formCardCustomCat, setFormCardCustomCat] = useState('');
   const [formCardLimit, setFormCardLimit] = useState<number | ''>('');
   const [formCardClose, setFormCardClose] = useState<number | ''>('');
   const [formCardDue, setFormCardDue] = useState<number | ''>('');
@@ -45,22 +47,104 @@ export default function CreditCards() {
   const [formPurCardId, setFormPurCardId] = useState('');
   const [formPurDesc, setFormPurDesc] = useState('');
   const [formPurCat, setFormPurCat] = useState('Casa');
+  const [formPurCustomCat, setFormPurCustomCat] = useState('');
   const [formPurValue, setFormPurValue] = useState<number | ''>('');
   const [formPurInstallments, setFormPurInstallments] = useState<number | ''>(1);
   const [formPurDate, setFormPurDate] = useState('');
   const [formPurFirstDue, setFormPurFirstDue] = useState('');
 
-  // Filtro de cartão selecionado para visualização
+  // Estados para edição de compra em modal
+  const [editingPurchase, setEditingPurchase] = useState<CardPurchase | null>(null);
+  const [editPurCategory, setEditPurCategory] = useState('Casa');
+  const [editPurCustomCat, setEditPurCustomCat] = useState('');
+  const [editPurDesc, setEditPurDesc] = useState('');
+  const [editPurValue, setEditPurValue] = useState<number | ''>('');
+  const [editPurCardId, setEditPurCardId] = useState('');
+  const [editPurDate, setEditPurDate] = useState('');
+  const [editPurFirstDue, setEditPurFirstDue] = useState('');
+
+  // Estado para edição rápida inline da categoria
+  const [quickEditCatPurchaseId, setQuickEditCatPurchaseId] = useState<string | null>(null);
+  const [quickCatValue, setQuickCatValue] = useState('');
+  const [quickCustomCatValue, setQuickCustomCatValue] = useState('');
+
+  // Filtros de seleção para visualização
   const [filterCardId, setFilterCardId] = useState('');
+  const [filterCardCategory, setFilterCardCategory] = useState('');
 
   const currentYearMonth = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
   
   const nextYMObj = new Date(selectedYear, selectedMonth, 1);
   const nextYearMonth = `${nextYMObj.getFullYear()}-${String(nextYMObj.getMonth() + 1).padStart(2, '0')}`;
 
+  const cardCategoryOptions = [
+    'Uso Pessoal',
+    'Corporativo',
+    'Alimentação & Benefícios',
+    'Viagens & Milhas',
+    'Família',
+    'Compras & Lazer',
+    'Outros'
+  ];
+
   const categories = [
     'Casa', 'Mercado', 'Farmácia', 'Veículo', 'Viagem', 'Lazer', 'Impostos', 'Educação', 'Saúde', 'Pets', 'Outros'
   ];
+
+  const allPurchaseCategories = Array.from(new Set([
+    'Casa', 'Mercado', 'Farmácia', 'Veículo', 'Viagem', 'Lazer', 'Impostos', 'Educação', 'Saúde', 'Pets',
+    ...(data.variableCategories || []).map(c => c.name),
+    'Outros'
+  ]));
+
+  const openEditPurchaseModal = (purchase: CardPurchase) => {
+    setEditingPurchase(purchase);
+    setEditPurDesc(purchase.description);
+    setEditPurValue(purchase.totalValue);
+    setEditPurCardId(purchase.cardId);
+    setEditPurDate(purchase.purchaseDate);
+    setEditPurFirstDue(purchase.firstDueDate);
+
+    const cat = purchase.category;
+    if (allPurchaseCategories.includes(cat) && cat !== 'Outros') {
+      setEditPurCategory(cat);
+      setEditPurCustomCat('');
+    } else {
+      setEditPurCategory('Outros');
+      setEditPurCustomCat(cat);
+    }
+  };
+
+  const handleSavePurchaseEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPurchase) return;
+
+    const finalCategory = editPurCategory === 'Outros' && editPurCustomCat.trim()
+      ? editPurCustomCat.trim()
+      : editPurCategory;
+
+    updateCardPurchase(editingPurchase.id, {
+      description: editPurDesc,
+      category: finalCategory || 'Outros',
+      totalValue: Number(editPurValue),
+      cardId: editPurCardId,
+      purchaseDate: editPurDate,
+      firstDueDate: editPurFirstDue
+    });
+
+    setEditingPurchase(null);
+  };
+
+  const handleQuickSaveCategory = (purchaseId: string) => {
+    const finalCat = quickCatValue === 'Outros' && quickCustomCatValue.trim()
+      ? quickCustomCatValue.trim()
+      : quickCatValue;
+
+    if (finalCat) {
+      updateCardPurchase(purchaseId, { category: finalCat });
+    }
+    setQuickEditCatPurchaseId(null);
+  };
 
   // Auto-selecionar o primeiro cartão se disponível
   React.useEffect(() => {
@@ -73,9 +157,14 @@ export default function CreditCards() {
     e.preventDefault();
     if (!formCardBank || !formCardName || !formCardLimit || !formCardClose || !formCardDue) return;
 
+    const finalCategory = formCardCategory === 'Outros' && formCardCustomCat.trim()
+      ? formCardCustomCat.trim()
+      : formCardCategory;
+
     const cardData = {
       bank: formCardBank,
       cardName: formCardName,
+      category: finalCategory || 'Uso Pessoal',
       limit: Number(formCardLimit),
       closingDay: Number(formCardClose),
       dueDay: Number(formCardDue),
@@ -94,10 +183,14 @@ export default function CreditCards() {
     e.preventDefault();
     if (!formPurCardId || !formPurDesc || !formPurCat || !formPurValue || !formPurInstallments || !formPurDate || !formPurFirstDue) return;
 
+    const finalPurCat = formPurCat === 'Outros' && formPurCustomCat.trim()
+      ? formPurCustomCat.trim()
+      : formPurCat;
+
     addCardPurchase({
       cardId: formPurCardId,
       description: formPurDesc,
-      category: formPurCat,
+      category: finalPurCat,
       totalValue: Number(formPurValue),
       totalInstallments: Number(formPurInstallments),
       purchaseDate: formPurDate,
@@ -110,6 +203,8 @@ export default function CreditCards() {
   const resetCardForm = () => {
     setFormCardBank('Nubank');
     setFormCardName('');
+    setFormCardCategory('Uso Pessoal');
+    setFormCardCustomCat('');
     setFormCardLimit('');
     setFormCardClose('');
     setFormCardDue('');
@@ -120,6 +215,7 @@ export default function CreditCards() {
   const resetPurchaseForm = () => {
     setFormPurDesc('');
     setFormPurCat('Casa');
+    setFormPurCustomCat('');
     setFormPurValue('');
     setFormPurInstallments(1);
     setFormPurDate('');
@@ -331,8 +427,19 @@ export default function CreditCards() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Filter className="w-3.5 h-3.5 text-zinc-400" />
+          <select
+            value={filterCardCategory}
+            onChange={(e) => setFilterCardCategory(e.target.value)}
+            id="filter-card-category-top"
+            className="text-[11px] p-1.5 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 outline-hidden font-bold cursor-pointer"
+          >
+            <option value="">Filtrar: Categoria do Cartão</option>
+            {cardCategoryOptions.map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
           <select
             value={filterCardId}
             onChange={(e) => setFilterCardId(e.target.value)}
@@ -358,7 +465,11 @@ export default function CreditCards() {
               </div>
             ) : (
               cardsCalculated
-                .filter(card => filterCardId ? card.id === filterCardId : true)
+                .filter(card => {
+                  const matchesCard = filterCardId ? card.id === filterCardId : true;
+                  const matchesCategory = filterCardCategory ? (card.category || 'Uso Pessoal') === filterCardCategory : true;
+                  return matchesCard && matchesCategory;
+                })
                 .map(card => (
                   <div
                     key={card.id}
@@ -368,9 +479,13 @@ export default function CreditCards() {
                     <div>
                       <div className="flex justify-between items-start mb-3">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <CardIcon className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                             <h3 className="text-sm font-black text-zinc-800 dark:text-zinc-200">{card.cardName}</h3>
+                            <span className="inline-flex items-center gap-1 text-[9px] px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold rounded-full border border-indigo-200/60 dark:border-indigo-800/40">
+                              <Tag className="w-2.5 h-2.5" />
+                              {card.category || 'Uso Pessoal'}
+                            </span>
                           </div>
                           <p className="text-[9px] text-zinc-400 font-bold mt-0.5 uppercase tracking-wide">
                             {card.bank} • Fechamento: dia {card.closingDay} • Vencimento: dia {card.dueDay}
@@ -382,6 +497,14 @@ export default function CreditCards() {
                               setEditingCardId(card.id);
                               setFormCardBank(card.bank);
                               setFormCardName(card.cardName);
+                              const cat = card.category || 'Uso Pessoal';
+                              if (cardCategoryOptions.includes(cat)) {
+                                setFormCardCategory(cat);
+                                setFormCardCustomCat('');
+                              } else {
+                                setFormCardCategory('Outros');
+                                setFormCardCustomCat(cat);
+                              }
                               setFormCardLimit(card.limit);
                               setFormCardClose(card.closingDay);
                               setFormCardDue(card.dueDay);
@@ -486,12 +609,79 @@ export default function CreditCards() {
                             className="p-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/30 transition-colors"
                           >
                             <div className="min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="w-2 h-2 bg-rose-500 rounded-full shrink-0"></span>
                                 <span className="text-xs font-black text-zinc-850 dark:text-zinc-200 truncate">{item.description}</span>
-                                <span className="text-[9px] px-1.5 py-0.5 bg-rose-50 text-rose-700 dark:bg-rose-950/20 dark:text-rose-400 font-bold uppercase rounded">
-                                  {item.category}
-                                </span>
+
+                                {quickEditCatPurchaseId === item.id ? (
+                                  <div
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-1.5 bg-white dark:bg-zinc-900 p-1 border border-indigo-400 dark:border-indigo-600 rounded-lg shadow-sm"
+                                  >
+                                    <select
+                                      value={quickCatValue}
+                                      onChange={(e) => setQuickCatValue(e.target.value)}
+                                      id={`quick-select-category-${item.id}`}
+                                      className="text-[10px] font-bold text-zinc-800 dark:text-zinc-100 bg-transparent outline-hidden cursor-pointer"
+                                      autoFocus
+                                    >
+                                      {allPurchaseCategories.map(c => (
+                                        <option key={c} value={c}>{c}</option>
+                                      ))}
+                                    </select>
+
+                                    {quickCatValue === 'Outros' && (
+                                      <input
+                                        type="text"
+                                        placeholder="Nova categoria..."
+                                        value={quickCustomCatValue}
+                                        onChange={(e) => setQuickCustomCatValue(e.target.value)}
+                                        id={`quick-input-custom-category-${item.id}`}
+                                        className="text-[10px] px-1.5 py-0.5 border border-zinc-200 dark:border-zinc-700 rounded bg-zinc-50 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-100 outline-hidden w-24 font-medium"
+                                      />
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleQuickSaveCategory(item.id)}
+                                      className="p-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded cursor-pointer"
+                                      title="Salvar Categoria"
+                                    >
+                                      <Check className="w-3 h-3" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setQuickEditCatPurchaseId(null)}
+                                      className="p-1 bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 text-zinc-600 dark:text-zinc-300 rounded cursor-pointer"
+                                      title="Cancelar"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setQuickEditCatPurchaseId(item.id);
+                                      const isStd = allPurchaseCategories.includes(item.category);
+                                      if (isStd && item.category !== 'Outros') {
+                                        setQuickCatValue(item.category);
+                                        setQuickCustomCatValue('');
+                                      } else {
+                                        setQuickCatValue('Outros');
+                                        setQuickCustomCatValue(item.category);
+                                      }
+                                    }}
+                                    className="group text-[9px] px-2 py-0.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-900/40 text-rose-700 dark:text-rose-400 font-bold uppercase rounded border border-rose-200/50 dark:border-rose-900/30 flex items-center gap-1 cursor-pointer transition-all"
+                                    title="Clique para alterar a categoria desta compra"
+                                  >
+                                    <Tag className="w-2.5 h-2.5 text-rose-500" />
+                                    <span>{item.category}</span>
+                                    <Edit2 className="w-2.5 h-2.5 text-rose-500 opacity-60 group-hover:opacity-100 transition-opacity ml-0.5" />
+                                  </button>
+                                )}
                               </div>
                               <p className="text-[10px] text-zinc-500 mt-1 font-semibold">
                                 Cartão: <strong className="text-zinc-700 dark:text-zinc-300">{card ? card.cardName : 'Deletado'}</strong> • Parcelas: {item.totalInstallments}x de R$ {instValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -512,18 +702,31 @@ export default function CreditCards() {
                           {/* Expansão das Parcelas Automáticas */}
                           {isExpanded && (
                             <div className="border-t border-zinc-150 dark:border-zinc-850 p-4 bg-white dark:bg-zinc-950 space-y-2">
-                              <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold border-b border-zinc-100 dark:border-zinc-850 pb-1.5">
+                              <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold border-b border-zinc-100 dark:border-zinc-850 pb-1.5 flex-wrap gap-2">
                                 <span className="uppercase">Cronograma de Faturamento das Parcelas:</span>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteCardPurchase(item.id);
-                                  }}
-                                  className="text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer font-extrabold"
-                                >
-                                  <Trash className="w-3.5 h-3.5" />
-                                  Excluir Lançamento
-                                </button>
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEditPurchaseModal(item);
+                                    }}
+                                    className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline flex items-center gap-1 cursor-pointer font-black"
+                                    title="Editar categoria ou dados desta compra"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                    Editar Compra / Categoria
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteCardPurchase(item.id);
+                                    }}
+                                    className="text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer font-extrabold"
+                                  >
+                                    <Trash className="w-3.5 h-3.5" />
+                                    Excluir Lançamento
+                                  </button>
+                                </div>
                               </div>
 
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -629,15 +832,25 @@ export default function CreditCards() {
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Categoria</label>
+                          <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Categoria da Compra</label>
                           <select
                             value={formPurCat}
                             onChange={(e) => setFormPurCat(e.target.value)}
                             id="select-purchase-category"
-                            className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                            className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-semibold"
                           >
                             {categories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
+                          {formPurCat === 'Outros' && (
+                            <input
+                              type="text"
+                              placeholder="Nome da categoria..."
+                              value={formPurCustomCat}
+                              onChange={(e) => setFormPurCustomCat(e.target.value)}
+                              id="input-purchase-custom-category"
+                              className="w-full text-xs p-2 mt-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                            />
+                          )}
                         </div>
 
                         <div>
@@ -750,6 +963,32 @@ export default function CreditCards() {
                         id="input-card-name"
                         className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-semibold"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Categoria do Cartão</label>
+                      <div className="space-y-2">
+                        <select
+                          value={formCardCategory}
+                          onChange={(e) => setFormCardCategory(e.target.value)}
+                          id="select-card-category"
+                          className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-semibold"
+                        >
+                          {cardCategoryOptions.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                        {formCardCategory === 'Outros' && (
+                          <input
+                            type="text"
+                            placeholder="Digite o nome da categoria personalizada..."
+                            value={formCardCustomCat}
+                            onChange={(e) => setFormCardCustomCat(e.target.value)}
+                            id="input-card-custom-category"
+                            className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                          />
+                        )}
+                      </div>
                     </div>
 
                     <div>
@@ -954,6 +1193,136 @@ export default function CreditCards() {
                 );
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Edição de Compra do Cartão */}
+      {editingPurchase && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative space-y-4">
+            <div className="flex justify-between items-center border-b border-zinc-100 dark:border-zinc-850 pb-3">
+              <div className="flex items-center gap-2">
+                <Tag className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">Editar Compra do Cartão</h3>
+              </div>
+              <button
+                onClick={() => setEditingPurchase(null)}
+                className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePurchaseEdit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Categoria da Compra</label>
+                <select
+                  value={editPurCategory}
+                  onChange={(e) => setEditPurCategory(e.target.value)}
+                  id="modal-select-purchase-category"
+                  className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-bold"
+                >
+                  {allPurchaseCategories.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                {editPurCategory === 'Outros' && (
+                  <input
+                    type="text"
+                    placeholder="Digite a categoria personalizada..."
+                    value={editPurCustomCat}
+                    onChange={(e) => setEditPurCustomCat(e.target.value)}
+                    id="modal-input-purchase-custom-category"
+                    className="w-full text-xs p-2.5 mt-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                  />
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Descrição da Compra</label>
+                <input
+                  required
+                  type="text"
+                  value={editPurDesc}
+                  onChange={(e) => setEditPurDesc(e.target.value)}
+                  id="modal-input-purchase-desc"
+                  className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-bold"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Valor Total (R$)</label>
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    value={editPurValue}
+                    onChange={(e) => setEditPurValue(e.target.value === '' ? '' : Number(e.target.value))}
+                    id="modal-input-purchase-value"
+                    className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-black text-rose-600 dark:text-rose-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Cartão Vinculado</label>
+                  <select
+                    value={editPurCardId}
+                    onChange={(e) => setEditPurCardId(e.target.value)}
+                    id="modal-select-purchase-card"
+                    className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-bold"
+                  >
+                    {data.creditCards.map(c => (
+                      <option key={c.id} value={c.id}>{c.cardName}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Data da Compra</label>
+                  <input
+                    required
+                    type="date"
+                    value={editPurDate}
+                    onChange={(e) => setEditPurDate(e.target.value)}
+                    id="modal-input-purchase-date"
+                    className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Primeiro Vencimento</label>
+                  <input
+                    required
+                    type="date"
+                    value={editPurFirstDue}
+                    onChange={(e) => setEditPurFirstDue(e.target.value)}
+                    id="modal-input-purchase-firstdue"
+                    className="w-full text-xs p-2.5 rounded-lg border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-zinc-100 dark:border-zinc-850">
+                <button
+                  type="button"
+                  onClick={() => setEditingPurchase(null)}
+                  className="px-4 py-2 text-xs font-bold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg cursor-pointer transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-black text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg cursor-pointer shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  Salvar Alterações
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
