@@ -42,6 +42,8 @@ export default function UsersAdmin() {
 updateUser, 
     deleteUser, 
     changeUserPassword,
+    changeAuthEmail,
+    changeAuthPassword,
     auditLogs,
     clearAuditLogs,
     removeDatabaseRedundancies
@@ -70,6 +72,7 @@ updateUser,
   const [editRole, setEditRole] = useState<'admin' | 'user'>('user');
   const [editActive, setEditActive] = useState<boolean>(true);
   const [editPassword, setEditPassword] = useState('');
+  const [editCurrentPassword, setEditCurrentPassword] = useState('');
   const [edit2fa, setEdit2fa] = useState<boolean>(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editSuccess, setEditSuccess] = useState<string | null>(null);
@@ -125,17 +128,49 @@ updateUser,
     setEditRole(user.role);
     setEditActive(user.active !== false);
     setEditPassword('');
+    setEditCurrentPassword('');
     setEdit2fa(user.twoFactorEnabled || false);
     setEditError(null);
     setEditSuccess(null);
   };
 
   // Salvar Edição de Usuário
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
     setEditError(null);
     setEditSuccess(null);
+
+    const isMe = currentUser && (currentUser.uid === editingUser.uid || currentUser.username === editingUser.username);
+
+    // Se estiver alterando e-mail ou senha da conta do usuário autenticado
+    if (isMe) {
+      const isEmailChanged = editEmail.trim().toLowerCase() !== (currentUser.email || '').toLowerCase();
+      const isPasswordChanged = !!editPassword.trim();
+
+      if (isEmailChanged || isPasswordChanged) {
+        if (!editCurrentPassword) {
+          setEditError('Informe sua senha atual para realizar a reautenticação no Firebase Auth.');
+          return;
+        }
+
+        if (isEmailChanged) {
+          const resEmail = await changeAuthEmail(editCurrentPassword, editEmail.trim());
+          if (!resEmail.success) {
+            setEditError(resEmail.error || 'Erro ao atualizar e-mail no Firebase Authentication.');
+            return;
+          }
+        }
+
+        if (isPasswordChanged) {
+          const resPass = await changeAuthPassword(editCurrentPassword, editPassword.trim());
+          if (!resPass.success) {
+            setEditError(resPass.error || 'Erro ao atualizar senha no Firebase Authentication.');
+            return;
+          }
+        }
+      }
+    }
 
     const updatedFields: any = {
       fullName: editFullName,
@@ -145,17 +180,14 @@ updateUser,
       twoFactorEnabled: edit2fa
     };
 
-    if (editPassword.trim()) {
-      updatedFields.password = editPassword;
-    }
-
-    const res = updateUser(editingUser.username, updatedFields);
+    const res = await updateUser(editingUser.username, updatedFields);
     if (!res.success) {
       setEditError(res.error || 'Erro ao atualizar dados do usuário.');
       return;
     }
 
-    setEditSuccess('Dados atualizados com sucesso!');
+    setEditSuccess('Dados do usuário atualizados com sucesso!');
+    setEditCurrentPassword('');
     setTimeout(() => {
       setEditingUser(null);
     }, 1500);
@@ -347,13 +379,29 @@ updateUser,
                   </label>
                   <p className="text-[9px] text-zinc-400 dark:text-zinc-500 font-semibold mb-1.5">Deixe em branco para manter a senha atual.</p>
                   <input
-                    type="text"
+                    type="password"
                     value={editPassword}
                     onChange={(e) => setEditPassword(e.target.value)}
-                    placeholder="Digite nova senha segura"
+                    placeholder="Digite a nova senha (mínimo 6 caracteres)"
                     className="w-full px-3 py-2.5 text-xs font-semibold bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 transition-all"
                   />
                 </div>
+
+                {/* Senha Atual se for a própria conta */}
+                {currentUser && (currentUser.uid === editingUser.uid || currentUser.username === editingUser.username) && (
+                  <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-900/40 rounded-2xl space-y-1.5">
+                    <label className="block text-[10px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider">
+                      Senha Atual (Obrigatória para alterar E-mail ou Senha)
+                    </label>
+                    <input
+                      type="password"
+                      value={editCurrentPassword}
+                      onChange={(e) => setEditCurrentPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full px-3 py-2 text-xs font-semibold bg-white dark:bg-zinc-950 border border-indigo-300 dark:border-indigo-800 rounded-xl text-zinc-800 dark:text-zinc-100 focus:outline-hidden"
+                    />
+                  </div>
+                )}
 
                 {/* Nível de Permissão e Ativo/Inativo */}
                 <div className="grid grid-cols-2 gap-4">

@@ -19,6 +19,7 @@ import FinancialCalendar from './components/FinancialCalendar';
 import AlertsPanel from './components/AlertsPanel';
 import Login from './components/Login';
 import UsersAdmin from './components/UsersAdmin';
+import UserProfileModal from './components/UserProfileModal';
 
 import {
   LayoutDashboard,
@@ -37,7 +38,8 @@ import {
   X,
   BellRing,
   Users,
-  LogOut
+  LogOut,
+  UserCog
 } from 'lucide-react';
 
 function DashboardShell() {
@@ -121,6 +123,7 @@ function DashboardShell() {
   const [showImporter, setShowImporter] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   // Controle de Modo Escuro (Dark Mode)
   const [isDarkMode, setIsDarkMode] = useState(() => {
@@ -203,23 +206,39 @@ function DashboardShell() {
 
         {/* Perfil de Usuário Logado & Logout */}
         <div className="p-4 border-t border-zinc-150 dark:border-zinc-850 bg-zinc-50/50 dark:bg-zinc-950/20 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-indigo-150 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-black text-xs flex items-center justify-center shrink-0 uppercase select-none">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={() => setShowProfileModal(true)}
+              title="Configurações da Minha Conta (Alterar E-mail / Senha)"
+              className="flex items-center gap-2 min-w-0 p-1.5 -ml-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-850 rounded-xl transition-colors cursor-pointer text-left group"
+            >
+              <div className="w-8 h-8 rounded-xl bg-indigo-150 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-black text-xs flex items-center justify-center shrink-0 uppercase select-none group-hover:scale-105 transition-transform">
                 {currentUser.username.slice(0, 2)}
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-black text-zinc-800 dark:text-zinc-200 truncate capitalize">{currentUser.username}</p>
+                <p className="text-xs font-black text-zinc-800 dark:text-zinc-200 truncate capitalize flex items-center gap-1">
+                  {currentUser.username}
+                  <UserCog className="w-3 h-3 text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </p>
                 <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider">{currentUser.role === 'admin' ? 'Administrador' : 'Usuário'}</p>
               </div>
-            </div>
-            <button
-              onClick={logoutUser}
-              title="Sair do Sistema"
-              className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-850 rounded-lg text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
             </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowProfileModal(true)}
+                title="Alterar E-mail / Senha"
+                className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-850 rounded-lg text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer transition-colors"
+              >
+                <UserCog className="w-4 h-4" />
+              </button>
+              <button
+                onClick={logoutUser}
+                title="Sair do Sistema"
+                className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-850 rounded-lg text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           {isOffline ? (
             <div className="flex items-center justify-center gap-1.5 text-[9px] text-amber-700 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 py-1 px-2 rounded-md border border-amber-200 dark:border-amber-900/40 select-none">
@@ -536,6 +555,12 @@ function DashboardShell() {
           </div>
         </div>
       )}
+
+      {/* 8. MODAL: PERFIL DE USUÁRIO / ALTERAR E-MAIL E SENHA */}
+      <UserProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
 
     </div>
   );

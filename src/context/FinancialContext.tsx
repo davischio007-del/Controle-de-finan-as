@@ -30,6 +30,10 @@ import {
   signOut,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  updateEmail,
+  updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   User as FirebaseUser
 } from 'firebase/auth';
 import {
@@ -208,6 +212,8 @@ interface FinancialContextType {
   ) => Promise<{ success: boolean; error?: string }>;
   deleteUser: (username: string) => Promise<void>;
   changeUserPassword: (username: string, newPassword: string) => Promise<void>;
+  changeAuthEmail: (currentPassword: string, newEmail: string) => Promise<{ success: boolean; error?: string }>;
+  changeAuthPassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean; error?: string }>;
   forgotPassword: (usernameOrEmail: string) => Promise<{ success: boolean; message: string }>;
 
   // Auditoria
@@ -805,8 +811,95 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const mapFirebaseAuthError = (err: any): string => {
+    const code = err?.code || '';
+    switch (code) {
+      case 'auth/requires-recent-login':
+        return 'Faça login novamente para alterar seus dados.';
+      case 'auth/wrong-password':
+      case 'auth/invalid-credential':
+        return 'Senha atual incorreta.';
+      case 'auth/email-already-in-use':
+        return 'Este email já está cadastrado.';
+      case 'auth/weak-password':
+        return 'A senha deve possuir pelo menos 6 caracteres.';
+      case 'auth/invalid-email':
+        return 'E-mail inválido.';
+      case 'auth/user-not-found':
+        return 'Usuário não encontrado.';
+      case 'auth/network-request-failed':
+        return 'Falha na conexão de rede. Verifique sua internet.';
+      default:
+        return err?.message || 'Erro de autenticação no Firebase.';
+    }
+  };
+
+  const changeAuthEmail = async (currentPassword: string, newEmail: string) => {
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+      return { success: false, error: 'Usuário não autenticado.' };
+    }
+
+    const cleanEmail = newEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'E-mail inválido.' };
+    }
+
+    const currentEmail = fbUser.email || `${currentUser?.username}@financpro.com`;
+
+    try {
+      const credential = EmailAuthProvider.credential(currentEmail, currentPassword);
+      await reauthenticateWithCredential(fbUser, credential);
+
+      await updateEmail(fbUser, cleanEmail);
+
+      const uid = fbUser.uid;
+      await setDoc(doc(db, 'users', uid), { email: cleanEmail, updatedAt: new Date().toISOString() }, { merge: true });
+
+      if (currentUser) {
+        setCurrentUser({ ...currentUser, email: cleanEmail });
+      }
+
+      addAuditLog('ALTERAR_EMAIL', 'Autenticação', `E-mail alterado para "${cleanEmail}" via Firebase Auth.`);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Erro ao alterar e-mail:', err);
+      const errorMsg = mapFirebaseAuthError(err);
+      addAuditLog('ERRO_ALTERAR_EMAIL', 'Autenticação', `Falha ao alterar e-mail: ${errorMsg}`);
+      return { success: false, error: errorMsg };
+    }
+  };
+
+  const changeAuthPassword = async (currentPassword: string, newPassword: string) => {
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+      return { success: false, error: 'Usuário não autenticado.' };
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'A senha deve possuir pelo menos 6 caracteres.' };
+    }
+
+    const currentEmail = fbUser.email || `${currentUser?.username}@financpro.com`;
+
+    try {
+      const credential = EmailAuthProvider.credential(currentEmail, currentPassword);
+      await reauthenticateWithCredential(fbUser, credential);
+
+      await updatePassword(fbUser, newPassword);
+
+      addAuditLog('ALTERAR_SENHA', 'Autenticação', `Senha de acesso alterada via Firebase Auth.`);
+      return { success: true };
+    } catch (err: any) {
+      console.error('Erro ao alterar senha:', err);
+      const errorMsg = mapFirebaseAuthError(err);
+      addAuditLog('ERRO_ALTERAR_SENHA', 'Autenticação', `Falha ao alterar senha: ${errorMsg}`);
+      return { success: false, error: errorMsg };
+    }
+  };
+
   const changeUserPassword = async (usernameTarget: string, newPassword: string) => {
-    addAuditLog('ALTERAR_SENHA', 'Usuários', `Senha do usuário redefinida.`);
+    addAuditLog('ALTERAR_SENHA', 'Usuários', `Solicitada alteração de senha do usuário ${usernameTarget}.`);
   };
 
   const forgotPassword = async (usernameOrEmail: string) => {
@@ -1829,6 +1922,8 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       updateUser,
       deleteUser,
       changeUserPassword,
+      changeAuthEmail,
+      changeAuthPassword,
       forgotPassword,
       auditLogs,
       addAuditLog,
