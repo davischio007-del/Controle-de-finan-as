@@ -23,6 +23,8 @@ import {
 } from '../types';
 import { getInitialData } from '../utils/defaultData';
 import { hashPassword, generate2FASecret, getTOTPCode } from '../utils/security';
+import { db } from '../firebase';
+import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
 interface FinancialContextType {
   data: FinancialData;
@@ -167,6 +169,28 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('financ_audit_logs', JSON.stringify(auditLogs));
   }, [auditLogs]);
 
+  // Listener em tempo real do Firestore para Logs de Auditoria
+  useEffect(() => {
+    try {
+      const auditRef = collection(db, 'auditLogs');
+      const q = query(auditRef, orderBy('timestamp', 'desc'), limit(500));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const logs: AuditLog[] = [];
+          snapshot.forEach(docSnap => {
+            logs.push(docSnap.data() as AuditLog);
+          });
+          setAuditLogs(logs);
+        }
+      }, (err) => {
+        console.warn('Audit logs listener warning:', err);
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Firestore setup warning:', e);
+    }
+  }, []);
+
   // Função auxiliar para registrar ações no log de auditoria
   const addAuditLog = (operation: string, module: string, details: string) => {
     const activeUser = currentUser ? currentUser.username : 'Sistema';
@@ -181,13 +205,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ip: savedIp
     };
     setAuditLogs(prev => [newLog, ...prev].slice(0, 5000));
+    setDoc(doc(db, 'auditLogs', newLog.id), newLog).catch(console.error);
   };
 
   const clearAuditLogs = () => {
     setAuditLogs([]);
   };
 
-  // Lista de Usuários do App (Persistido no localStorage)
+  // Lista de Usuários do App (Persistido no localStorage + Cloud Firestore)
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem('financ_users');
     let loadedUsers: any[] = [];
@@ -243,6 +268,40 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('financ_users', JSON.stringify(migrated));
     return migrated;
   });
+
+  // Listener em tempo real para sincronização de Usuários com o Firestore Cloud DB
+  useEffect(() => {
+    try {
+      const usersRef = collection(db, 'users');
+      const unsubscribe = onSnapshot(usersRef, (snapshot) => {
+        if (!snapshot.empty) {
+          const firestoreUsers: User[] = [];
+          snapshot.forEach(docSnap => {
+            firestoreUsers.push(docSnap.data() as User);
+          });
+          setUsers(firestoreUsers);
+        } else {
+          // Se o banco na nuvem estiver vazio, criar usuário admin padrão no Firestore
+          const initialAdmin: User = {
+            fullName: 'Administrador Geral',
+            username: 'admin',
+            password: hashPassword('admin'),
+            email: 'admin@financpro.com',
+            role: 'admin',
+            active: true,
+            createdAt: new Date().toISOString(),
+            failedLoginAttempts: 0
+          };
+          setDoc(doc(db, 'users', 'admin'), initialAdmin).catch(console.error);
+        }
+      }, (err) => {
+        console.warn('Erro na sincronização de usuários Firestore:', err);
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Erro Firestore users:', e);
+    }
+  }, []);
 
   // Usuário Logado Atualmente
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -307,7 +366,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     return savedTheme === 'true';
   });
 
-  // Persistir Usuários
+  // Persistir Usuários no LocalStorage
   useEffect(() => {
     localStorage.setItem('financ_users', JSON.stringify(users));
   }, [users]);
@@ -316,35 +375,60 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('financ_current_user', JSON.stringify(currentUser));
-      const savedData = localStorage.getItem(`financ_data_v1_${currentUser.username}`);
-      if (savedData) {
-        try {
-          const parsed = JSON.parse(savedData) as FinancialData;
-          if (!parsed.fixedCategories || parsed.fixedCategories.length === 0) {
-            parsed.fixedCategories = getInitialData().fixedCategories;
-          }
-          if (!parsed.variableCategories || parsed.variableCategories.length === 0) {
-            parsed.variableCategories = getInitialData().variableCategories;
-          }
-          setData(parsed);
-        } catch (e) {
-          setData(getInitialData());
-        }
-      } else {
-        // Se for a primeira vez dele, inicializar com dados de demonstração
-        setData(getInitialData());
-      }
     } else {
       localStorage.removeItem('financ_current_user');
     }
   }, [currentUser]);
 
-  // Persistir Dados no LocalStorage dinamicamente
+  // Listener em tempo real do Firestore para Dados Financeiros do Usuário
   useEffect(() => {
+    const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
+    try {
+      const dataDocRef = doc(db, 'financialData', activeUsername);
+      const unsubscribe = onSnapshot(dataDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const remoteData = docSnap.data() as FinancialData;
+          if (!remoteData.fixedCategories || remoteData.fixedCategories.length === 0) {
+            remoteData.fixedCategories = getInitialData().fixedCategories;
+          }
+          if (!remoteData.variableCategories || remoteData.variableCategories.length === 0) {
+            remoteData.variableCategories = getInitialData().variableCategories;
+          }
+          setData(remoteData);
+        } else {
+          const initial = getInitialData();
+          setDoc(dataDocRef, { ...initial, username: activeUsername }).catch(console.error);
+        }
+      }, (err) => {
+        console.warn('Erro snapshot financialData Firestore:', err);
+      });
+
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Erro Firestore financialData:', e);
+    }
+  }, [currentUser?.username]);
+
+  // Sincronizar Dados no LocalStorage e no Cloud Firestore
+  useEffect(() => {
+    const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
     if (currentUser) {
       localStorage.setItem(`financ_data_v1_${currentUser.username}`, JSON.stringify(data));
     } else {
       localStorage.setItem('financ_data_v1', JSON.stringify(data));
+    }
+
+    try {
+      const dataDocRef = doc(db, 'financialData', activeUsername);
+      setDoc(dataDocRef, {
+        ...data,
+        username: activeUsername,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(err => {
+        console.error('Erro salvando no Firestore:', err);
+      });
+    } catch (e) {
+      console.warn('Firestore write error:', e);
     }
   }, [data, currentUser]);
 
@@ -422,6 +506,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
       setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
       setCurrentUser(updatedUser);
+      setDoc(doc(db, 'users', cleanUsername), updatedUser).catch(console.error);
 
       // Registrar Auditoria
       const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
@@ -456,6 +541,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       };
 
       setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
+      setDoc(doc(db, 'users', cleanUsername), updatedUser).catch(console.error);
 
       // Registrar falha na auditoria
       const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
@@ -525,6 +611,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     };
     
     setUsers(prev => [...prev, newUser]);
+    setDoc(doc(db, 'users', compareUsername), newUser).catch(console.error);
     addAuditLog('CRIAR_USUARIO', 'Usuários', `Usuário "${cleanUsername}" (${role}) cadastrado no sistema.`);
     return { success: true };
   };
@@ -571,6 +658,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     }
 
     setUsers(prev => prev.map(u => u.username.toLowerCase() === compareUsername ? updatedUser : u));
+    setDoc(doc(db, 'users', compareUsername), updatedUser).catch(console.error);
 
     // Se estiver editando o usuário logado atualmente, atualizar também seu estado
     if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
@@ -590,17 +678,21 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       return; // prevent deleting logged-in user
     }
     setUsers(prev => prev.filter(u => u.username.toLowerCase() !== compareUsername));
+    deleteDoc(doc(db, 'users', compareUsername)).catch(console.error);
+    deleteDoc(doc(db, 'financialData', compareUsername)).catch(console.error);
     localStorage.removeItem(`financ_data_v1_${username}`);
     addAuditLog('EXCLUIR_USUARIO', 'Usuários', `Usuário "${username}" e todo seu banco de dados foram excluídos permanentemente.`);
   };
 
   const changeUserPassword = (username: string, newPassword: string) => {
+    const compareUsername = username.toLowerCase();
     setUsers(prev => prev.map(u => {
-      if (u.username.toLowerCase() === username.toLowerCase()) {
+      if (u.username.toLowerCase() === compareUsername) {
         const updated = { ...u, password: hashPassword(newPassword) };
-        if (currentUser && currentUser.username.toLowerCase() === username.toLowerCase()) {
+        if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
           setCurrentUser(updated);
         }
+        setDoc(doc(db, 'users', compareUsername), updated).catch(console.error);
         return updated;
       }
       return u;

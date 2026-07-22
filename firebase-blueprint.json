@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "users": {
+      "title": "users",
+      "description": "Registered system users",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "lastLoginIp": { "type": "string" },
+        "failedLoginAttempts": { "type": "number" },
+        "lockedUntil": { "type": "string" },
+        "twoFactorEnabled": { "type": "boolean" },
+        "twoFactorSecret": { "type": "string" }
+      },
+      "required": ["username", "fullName", "role", "active"]
+    },
+    "financialData": {
+      "title": "financialData",
+      "description": "Financial records per user",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "salaries": { "type": "array" },
+        "fixedExpenses": { "type": "array" },
+        "variableExpenses": { "type": "array" },
+        "consignados": { "type": "array" },
+        "creditCards": { "type": "array" },
+        "cardPurchases": { "type": "array" },
+        "savingsGoals": { "type": "array" },
+        "emergencyFund": { "type": "object" },
+        "investments": { "type": "array" },
+        "patrimonyItems": { "type": "array" },
+        "fixedCategories": { "type": "array" },
+        "variableCategories": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["username"]
+    },
+    "auditLogs": {
+      "title": "auditLogs",
+      "description": "System audit logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "operation": { "type": "string" },
+        "module": { "type": "string" },
+        "details": { "type": "string" },
+        "ip": { "type": "string" }
+      },
+      "required": ["id", "username", "timestamp", "operation", "module"]
+    }
+  }
+}

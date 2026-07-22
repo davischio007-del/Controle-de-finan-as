@@ -201,8 +201,12 @@ function DashboardShell() {
               <LogOut className="w-4 h-4" />
             </button>
           </div>
+          <div className="flex items-center justify-center gap-1.5 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 py-1 px-2 rounded-md border border-emerald-200 dark:border-emerald-900/40 select-none">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Nuvem Firestore Ativo</span>
+          </div>
           <div className="text-[9px] text-zinc-400 font-bold text-center">
-            Versão 1.3.0 • Multi-User Admin
+            Versão 1.3.0 • Multi-User Admin & Cloud DB
           </div>
         </div>
       </aside>
