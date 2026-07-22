@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import {
   FinancialData,
   Salary,
@@ -205,7 +205,9 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ip: savedIp
     };
     setAuditLogs(prev => [newLog, ...prev].slice(0, 5000));
-    setDoc(doc(db, 'auditLogs', newLog.id), newLog).catch(console.error);
+    setDoc(doc(db, 'auditLogs', newLog.id), newLog).catch(err => {
+      console.warn('Audit log write warning:', err?.message || err);
+    });
   };
 
   const clearAuditLogs = () => {
@@ -279,7 +281,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
           snapshot.forEach(docSnap => {
             firestoreUsers.push(docSnap.data() as User);
           });
-          setUsers(firestoreUsers);
+          setUsers(prev => {
+            if (JSON.stringify(prev) === JSON.stringify(firestoreUsers)) return prev;
+            return firestoreUsers;
+          });
         } else {
           // Se o banco na nuvem estiver vazio, criar usuário admin padrão no Firestore
           const initialAdmin: User = {
@@ -292,7 +297,9 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
             createdAt: new Date().toISOString(),
             failedLoginAttempts: 0
           };
-          setDoc(doc(db, 'users', 'admin'), initialAdmin).catch(console.error);
+          setDoc(doc(db, 'users', 'admin'), initialAdmin).catch(err => {
+            console.warn('Erro ao criar admin inicial no Firestore:', err?.message || err);
+          });
         }
       }, (err) => {
         console.warn('Erro na sincronização de usuários Firestore:', err);
@@ -359,6 +366,9 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     return parsedData;
   });
 
+  const isRemoteUpdateRef = useRef(false);
+  const prevDataJsonRef = useRef('');
+
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<number>(7); // Julho
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -394,13 +404,21 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
           if (!remoteData.variableCategories || remoteData.variableCategories.length === 0) {
             remoteData.variableCategories = getInitialData().variableCategories;
           }
-          setData(remoteData);
+
+          const remoteJson = JSON.stringify(remoteData);
+          if (prevDataJsonRef.current !== remoteJson) {
+            prevDataJsonRef.current = remoteJson;
+            isRemoteUpdateRef.current = true;
+            setData(remoteData);
+          }
         } else {
           const initial = getInitialData();
-          setDoc(dataDocRef, { ...initial, username: activeUsername }).catch(console.error);
+          setDoc(dataDocRef, { ...initial, username: activeUsername }).catch(err => {
+            console.warn('Erro ao criar doc de dados no Firestore:', err?.message || err);
+          });
         }
       }, (err) => {
-        console.warn('Erro snapshot financialData Firestore:', err);
+        console.warn('Erro snapshot financialData Firestore:', err?.message || err);
       });
 
       return () => unsubscribe();
@@ -418,18 +436,34 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('financ_data_v1', JSON.stringify(data));
     }
 
-    try {
-      const dataDocRef = doc(db, 'financialData', activeUsername);
-      setDoc(dataDocRef, {
-        ...data,
-        username: activeUsername,
-        updatedAt: new Date().toISOString()
-      }, { merge: true }).catch(err => {
-        console.error('Erro salvando no Firestore:', err);
-      });
-    } catch (e) {
-      console.warn('Firestore write error:', e);
+    const currentJson = JSON.stringify(data);
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      return;
     }
+
+    if (prevDataJsonRef.current === currentJson) {
+      return;
+    }
+
+    prevDataJsonRef.current = currentJson;
+
+    const timer = setTimeout(() => {
+      try {
+        const dataDocRef = doc(db, 'financialData', activeUsername);
+        setDoc(dataDocRef, {
+          ...data,
+          username: activeUsername,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(err => {
+          console.warn('Aviso salvando no Firestore:', err?.message || err);
+        });
+      } catch (e) {
+        console.warn('Firestore write error:', e);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [data, currentUser]);
 
   // Persistir e Aplicar Tema
