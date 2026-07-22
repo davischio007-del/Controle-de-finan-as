@@ -7,17 +7,25 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isUser(userId) {
+    function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Regra estrita: Cada usuário só lê e escreve em seu próprio caminho /users/{userId}
-    match /users/{userId} {
-      allow read, write: if isUser(userId);
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissao == 'administrador'
+      );
+    }
 
-      // Acesso a todas as subcoleções (financialData, fixedExpenses, etc) do próprio usuário
+    // Regra do Usuário: Cada usuário lê e escreve seu próprio nó /users/{userId} ou o administrador
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+
+      // Subcoleções do usuário (financialData, expenses, cards, investments, alerts)
       match /{document=**} {
-        allow read, write: if isUser(userId);
+        allow read, write: if isOwner(userId) || isAdmin();
       }
     }
 
@@ -26,7 +34,7 @@ service cloud.firestore {
       allow read, write: if isSignedIn();
     }
 
-    // Bloqueio padrão para qualquer outra rota
+    // Bloqueio padrão para rotas não mapeadas
     match /{document=**} {
       allow read, write: if false;
     }

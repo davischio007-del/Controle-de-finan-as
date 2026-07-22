@@ -4,7 +4,9 @@ import {
   setPersistence,
   browserLocalPersistence,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signOut
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -18,7 +20,7 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 
-// Habilitar persistência de autenticação do Firebase Auth
+// Habilitar persistência de autenticação do Firebase Auth (browserLocalPersistence)
 setPersistence(auth, browserLocalPersistence).catch((err) => {
   console.warn('Persistência Firebase Auth alerta:', err?.message || err);
 });
@@ -26,6 +28,8 @@ setPersistence(auth, browserLocalPersistence).catch((err) => {
 export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
+
+export { onAuthStateChanged, signOut };
 
 export enum OperationType {
   CREATE = 'create',
@@ -88,47 +92,70 @@ export async function testFirestoreConnection() {
 
 // Inicializador automático para garantir a existência do usuário Admin no Firebase Auth + Firestore
 export async function ensureAdminUserCreated() {
-  const adminEmail = 'admin@financpro.com';
-  const adminPassword = 'admin';
+  // Lista de administradores padrão para provisionamento automático no Firebase Auth
+  const defaultAdmins = [
+    {
+      nome: 'davischio',
+      username: 'davischio',
+      email: 'davischio@admin.com',
+      password: 'Snoop123@',
+      role: 'admin',
+      permissao: 'administrador'
+    },
+    {
+      nome: 'Administrador',
+      username: 'admin',
+      email: 'admin@financpro.com',
+      password: 'admin',
+      role: 'admin',
+      permissao: 'administrador'
+    }
+  ];
 
-  try {
-    let userCredential;
+  for (const adminData of defaultAdmins) {
     try {
-      userCredential = await signInWithEmailAndPassword(auth, adminEmail, adminPassword);
-    } catch (err: any) {
-      const code = err?.code;
-      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-        try {
-          userCredential = await createUserWithEmailAndPassword(auth, adminEmail, adminPassword);
-        } catch {
-          return;
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, adminData.email, adminData.password);
+      } catch (err: any) {
+        const code = err?.code;
+        if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+          try {
+            userCredential = await createUserWithEmailAndPassword(auth, adminData.email, adminData.password);
+          } catch {
+            continue;
+          }
+        } else {
+          continue;
         }
-      } else {
-        return;
       }
-    }
 
-    if (userCredential?.user) {
-      const uid = userCredential.user.uid;
-      const userRef = doc(db, 'users', uid);
-      const snap = await getDocFromServer(userRef).catch(() => null);
-      if (!snap || !snap.exists()) {
-        await setDoc(userRef, {
-          uid,
-          fullName: 'Administrador',
-          username: 'admin',
-          email: adminEmail,
-          role: 'admin',
-          active: true,
-          createdAt: new Date().toISOString(),
-          failedLoginAttempts: 0
-        }, { merge: true });
+      if (userCredential?.user) {
+        const uid = userCredential.user.uid;
+        const userRef = doc(db, 'users', uid);
+        const snap = await getDocFromServer(userRef).catch(() => null);
+        if (!snap || !snap.exists()) {
+          await setDoc(userRef, {
+            uid,
+            nome: adminData.nome,
+            fullName: adminData.nome,
+            username: adminData.username,
+            email: adminData.email,
+            role: adminData.role,
+            permissao: adminData.permissao,
+            active: true,
+            ativo: true,
+            createdAt: new Date().toISOString(),
+            failedLoginAttempts: 0
+          }, { merge: true });
+        }
       }
+    } catch (e) {
+      console.warn('Auto-inicialização do admin finalizada:', e);
     }
-  } catch (e) {
-    console.warn('Auto-inicialização de admin finalizada ou tratada:', e);
   }
 }
 
-// Executa em segundo plano para provisionar automaticamente no carregamento da aplicação
+// Executa auto-provisionamento em segundo plano ao iniciar
 ensureAdminUserCreated();
+

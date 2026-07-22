@@ -150,9 +150,9 @@ export default function Login() {
         {/* Logo / Branding */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-indigo-600 text-white font-black text-xl shadow-md shadow-indigo-500/10 mb-3">
-            F
+            O
           </div>
-          <h1 className="text-xl font-black tracking-tight text-zinc-900 dark:text-white">Finanças Pro</h1>
+          <h1 className="text-xl font-black tracking-tight text-zinc-900 dark:text-white">Organizador Financeiro</h1>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider mt-1">Gestor de Orçamento</p>
         </div>
 
@@ -264,7 +264,7 @@ export default function Login() {
                         type="text"
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
-                        placeholder="Ex: admin"
+                        placeholder="Ex: davischio ou davischio@admin.com"
                         className="w-full pl-10 pr-4 py-3 text-xs font-semibold bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 focus:outline-hidden focus:border-indigo-500 transition-all"
                       />
                     </div>
