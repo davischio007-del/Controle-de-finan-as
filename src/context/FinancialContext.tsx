@@ -178,6 +178,14 @@ interface FinancialContextType {
   
   // Utility
   alerts: FinancialAlert[];
+  allGeneratedAlerts: FinancialAlert[];
+  dismissedAlertIds: string[];
+  dismissAlert: (alertId: string) => void;
+  restoreAlert: (alertId: string) => void;
+  dismissAllAlerts: () => void;
+  restoreAllAlerts: () => void;
+  hideAlertsPanel: boolean;
+  setHideAlertsPanel: (hide: boolean) => void;
   importData: (imported: FinancialData) => boolean;
   clearAllData: () => void;
 
@@ -1511,8 +1519,85 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     addAuditLog('LIMPAR_DADOS', 'Relatórios & Backup', 'Todos os dados financeiros ativos foram redefinidos e zerados.');
   };
 
-  // --- CÁLCULO DE ALERTAS ---
-  const [alerts, setAlerts] = useState<FinancialAlert[]>([]);
+  // --- CÁLCULO E GESTÃO DE ALERTAS ---
+  const [allGeneratedAlerts, setAllGeneratedAlerts] = useState<FinancialAlert[]>([]);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<string[]>([]);
+  const [hideAlertsPanel, setHideAlertsPanelState] = useState<boolean>(false);
+
+  const userKey = currentUser ? currentUser.username.toLowerCase() : 'default';
+
+  // Carregar preferências salvas de alertas
+  useEffect(() => {
+    try {
+      const savedDismissed = localStorage.getItem(`financ_dismissed_alerts_${userKey}`);
+      if (savedDismissed) {
+        setDismissedAlertIds(JSON.parse(savedDismissed));
+      } else {
+        setDismissedAlertIds([]);
+      }
+
+      const savedHide = localStorage.getItem(`financ_hide_alerts_${userKey}`);
+      setHideAlertsPanelState(savedHide === 'true');
+    } catch {
+      setDismissedAlertIds([]);
+      setHideAlertsPanelState(false);
+    }
+  }, [userKey]);
+
+  const dismissAlert = (alertId: string) => {
+    setDismissedAlertIds(prev => {
+      if (prev.includes(alertId)) return prev;
+      const updated = [...prev, alertId];
+      try {
+        localStorage.setItem(`financ_dismissed_alerts_${userKey}`, JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
+    });
+  };
+
+  const restoreAlert = (alertId: string) => {
+    setDismissedAlertIds(prev => {
+      const updated = prev.filter(id => id !== alertId);
+      try {
+        localStorage.setItem(`financ_dismissed_alerts_${userKey}`, JSON.stringify(updated));
+      } catch (e) {
+        console.error(e);
+      }
+      return updated;
+    });
+  };
+
+  const dismissAllAlerts = () => {
+    const allIds = allGeneratedAlerts.map(a => a.id);
+    setDismissedAlertIds(allIds);
+    try {
+      localStorage.setItem(`financ_dismissed_alerts_${userKey}`, JSON.stringify(allIds));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const restoreAllAlerts = () => {
+    setDismissedAlertIds([]);
+    try {
+      localStorage.removeItem(`financ_dismissed_alerts_${userKey}`);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const setHideAlertsPanel = (hide: boolean) => {
+    setHideAlertsPanelState(hide);
+    try {
+      localStorage.setItem(`financ_hide_alerts_${userKey}`, String(hide));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const alerts = allGeneratedAlerts.filter(a => !dismissedAlertIds.includes(a.id));
 
   useEffect(() => {
     const list: FinancialAlert[] = [];
@@ -1641,7 +1726,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    setAlerts(list);
+    setAllGeneratedAlerts(list);
   }, [data, selectedYear, selectedMonth]);
 
   return (
@@ -1685,6 +1770,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       updateVariableCategory,
       deleteVariableCategory,
       alerts,
+      allGeneratedAlerts,
+      dismissedAlertIds,
+      dismissAlert,
+      restoreAlert,
+      dismissAllAlerts,
+      restoreAllAlerts,
+      hideAlertsPanel,
+      setHideAlertsPanel,
       importData,
       clearAllData,
       darkMode,
