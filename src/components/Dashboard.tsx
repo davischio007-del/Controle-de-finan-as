@@ -21,11 +21,17 @@ import {
   Sparkles,
   Search,
   CheckCircle2,
-  HelpCircle
+  HelpCircle,
+  CalendarDays,
+  ChevronRight
 } from 'lucide-react';
 import AlertsPanel from './AlertsPanel';
 
-export default function Dashboard() {
+interface DashboardProps {
+  onNavigateTab?: (tab: string, filter?: string) => void;
+}
+
+export default function Dashboard({ onNavigateTab }: DashboardProps = {}) {
   const { data, selectedYear, selectedMonth, setSelectedYear, setSelectedMonth } = useFinancial();
   const [hoveredPieIndex, setHoveredPieIndex] = useState<number | null>(null);
 
@@ -758,14 +764,23 @@ export default function Dashboard() {
                   <th className="p-3">Saldo Devedor Restante</th>
                   <th className="p-3">Parcela Mensal</th>
                   <th className="p-3">Progresso de Quitação</th>
+                  <th className="p-3 text-center">Ação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-150 dark:divide-zinc-800">
                 {Object.entries(consignadosByBank).map(([bank, stats]) => {
                   const percentPaid = stats.initial > 0 ? (stats.totalPaid / stats.initial) * 100 : 0;
                   return (
-                    <tr key={bank} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/30">
-                      <td className="p-3 font-semibold text-zinc-800 dark:text-zinc-200">{bank}</td>
+                    <tr 
+                      key={bank} 
+                      onClick={() => onNavigateTab?.('consignados', bank)}
+                      className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 cursor-pointer transition-colors group"
+                      title={`Clique para abrir o Cronograma Completo de Amortização de ${bank}`}
+                    >
+                      <td className="p-3 font-bold text-zinc-800 dark:text-zinc-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 flex items-center gap-2">
+                        <Landmark className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <span>{bank}</span>
+                      </td>
                       <td className="p-3 text-zinc-600 dark:text-zinc-400">R$ {stats.initial.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                       <td className="p-3 text-emerald-600 dark:text-emerald-400 font-medium">R$ {stats.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                       <td className="p-3 text-zinc-850 dark:text-zinc-100 font-bold">R$ {stats.remaining.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -779,6 +794,20 @@ export default function Dashboard() {
                           </div>
                           <span className="font-semibold text-[10px] text-zinc-500">{percentPaid.toFixed(0)}%</span>
                         </div>
+                      </td>
+                      <td className="p-3 text-center">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNavigateTab?.('consignados', bank);
+                          }}
+                          className="px-2.5 py-1 text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 rounded-lg border border-indigo-100 dark:border-indigo-900/40 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <CalendarDays className="w-3 h-3" />
+                          <span>Abrir Cronograma</span>
+                          <ChevronRight className="w-3 h-3" />
+                        </button>
                       </td>
                     </tr>
                   );

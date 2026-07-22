@@ -148,7 +148,11 @@ export function calculateAmortizationSchedule(
   return schedule;
 }
 
-export default function Consignados() {
+interface ConsignadosProps {
+  targetBankFilter?: string;
+}
+
+export default function Consignados({ targetBankFilter }: ConsignadosProps = {}) {
   const { data, addConsignado, updateConsignado, deleteConsignado, selectedYear, selectedMonth } = useFinancial();
 
   // Abas de navegação do módulo avançado
@@ -164,7 +168,8 @@ export default function Consignados() {
   // Modal para visualização em tela cheia da Tabela de Amortização
   const [scheduleModalLoan, setScheduleModalLoan] = useState<(Consignado & { schedule: AmortizationRow[] }) | null>(null);
 
-  // Filtros internos da tabela
+  // Filtros de busca de contratos e da tabela de parcelas
+  const [contractSearchQuery, setContractSearchQuery] = useState('');
   const [tableSearchQuery, setTableSearchQuery] = useState('');
   const [tableStatusFilter, setTableStatusFilter] = useState<'all' | 'paid' | 'open' | 'overdue'>('all');
 
@@ -492,6 +497,32 @@ export default function Consignados() {
     });
   }, [data.consignados]);
 
+  // Sincronizar scheduleModalLoan com consignadosCalculated quando dados forem atualizados
+  useEffect(() => {
+    if (scheduleModalLoan) {
+      const updated = consignadosCalculated.find(c => c.id === scheduleModalLoan.id);
+      if (updated) {
+        setScheduleModalLoan(updated);
+      }
+    }
+  }, [consignadosCalculated]);
+
+  // Efeito ao receber filtro de banco de navegação externa (ex: Dashboard)
+  useEffect(() => {
+    if (targetBankFilter) {
+      const q = targetBankFilter.toLowerCase().trim();
+      setContractSearchQuery(targetBankFilter);
+      const matching = consignadosCalculated.find(c =>
+        c.bank.toLowerCase().includes(q) ||
+        c.contractNumber.toLowerCase().includes(q)
+      );
+      if (matching) {
+        setExpandedLoanId(matching.id);
+        setScheduleModalLoan(matching);
+      }
+    }
+  }, [targetBankFilter, consignadosCalculated]);
+
   // Cálculo da tabela de preview para o formulário
   const formPreviewSchedule = useMemo(() => {
     const pv = Number(formBorrowed);
@@ -556,29 +587,27 @@ export default function Consignados() {
   }, [consignadosCalculated]);
 
   // Distribuição de saldos devedores por Banco
-  const bankDashboard = useMemo(() => {
-    const map: Record<string, number> = {
-      'Banco do Brasil': 0,
-      'Caixa': 0,
-      'Sicoob': 0,
-      'Outros': 0
-    };
+  const bankDashboardList = useMemo(() => {
+    const map: Record<string, { remaining: number; total: number; activeCount: number }> = {};
 
     consignadosCalculated.forEach(c => {
-      if (c.isPaid) return;
-      const bank = c.bank || '';
-      if (bank.includes('Brasil') || bank.includes('BB')) {
-        map['Banco do Brasil'] += c.totalRemainingAmortization;
-      } else if (bank.includes('Caixa') || bank.includes('CEF')) {
-        map['Caixa'] += c.totalRemainingAmortization;
-      } else if (bank.includes('Sicoob')) {
-        map['Sicoob'] += c.totalRemainingAmortization;
-      } else {
-        map['Outros'] += c.totalRemainingAmortization;
+      const bankName = c.bank?.trim() || 'Outros Bancos';
+      if (!map[bankName]) {
+        map[bankName] = { remaining: 0, total: 0, activeCount: 0 };
+      }
+      map[bankName].total += c.borrowedAmount;
+      if (!c.isPaid) {
+        map[bankName].remaining += c.totalRemainingAmortization;
+        map[bankName].activeCount += 1;
       }
     });
 
-    return map;
+    return Object.entries(map).map(([bank, stats]) => ({
+      bank,
+      remaining: stats.remaining,
+      total: stats.total,
+      activeCount: stats.activeCount
+    }));
   }, [consignadosCalculated]);
 
   // --- LÓGICA DE SIMULAÇÃO DE QUITAÇÃO ANTECIPADA ---
@@ -766,35 +795,34 @@ export default function Consignados() {
 
       {/* CARDS RESUMO DO CONTINGENTE DE CONSIGNADOS */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs flex flex-col justify-between min-h-[90px]">
-          <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Banco do Brasil</span>
-          <div className="mt-1">
-            <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200">
-              R$ {bankDashboard['Banco do Brasil'].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </h4>
-            <p className="text-[9px] text-zinc-400 font-medium">Saldo devedor restante</p>
+        {bankDashboardList.map(b => (
+          <div
+            key={b.bank}
+            onClick={() => {
+              setContractSearchQuery(b.bank);
+              const matching = consignadosCalculated.find(c => c.bank.toLowerCase().includes(b.bank.toLowerCase()));
+              if (matching) {
+                setExpandedLoanId(matching.id);
+                setScheduleModalLoan(matching);
+              }
+            }}
+            className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs flex flex-col justify-between min-h-[90px] hover:border-indigo-400 dark:hover:border-indigo-600 transition-all cursor-pointer group"
+            title={`Clique para ver o Cronograma Completo de Amortização de ${b.bank}`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-extrabold text-zinc-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 uppercase tracking-wider block truncate">{b.bank}</span>
+              <CalendarDays className="w-3.5 h-3.5 text-zinc-300 group-hover:text-indigo-500 shrink-0" />
+            </div>
+            <div className="mt-1">
+              <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200">
+                R$ {b.remaining.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </h4>
+              <p className="text-[9px] text-zinc-400 font-medium">
+                {b.activeCount > 0 ? `${b.activeCount} contrato(s) ativo(s)` : 'Quitado'}
+              </p>
+            </div>
           </div>
-        </div>
-
-        <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs flex flex-col justify-between min-h-[90px]">
-          <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Caixa Federal</span>
-          <div className="mt-1">
-            <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200">
-              R$ {bankDashboard['Caixa'].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </h4>
-            <p className="text-[9px] text-zinc-400 font-medium">Saldo devedor restante</p>
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs flex flex-col justify-between min-h-[90px]">
-          <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Sicoob Credi</span>
-          <div className="mt-1">
-            <h4 className="text-sm font-black text-zinc-800 dark:text-zinc-200">
-              R$ {bankDashboard['Sicoob'].toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </h4>
-            <p className="text-[9px] text-zinc-400 font-medium">Saldo devedor restante</p>
-          </div>
-        </div>
+        ))}
 
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-4 rounded-2xl shadow-xs flex flex-col justify-between min-h-[90px]">
           <span className="text-[9px] font-extrabold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider block">Economia em Quitações</span>
@@ -875,23 +903,43 @@ export default function Consignados() {
           {/* LADO ESQUERDO: LISTA DE CONTRATOS */}
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-5 rounded-2xl shadow-xs">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-850">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-850">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">Meus Empréstimos Consignados</h3>
                   <p className="text-xs text-zinc-500 font-medium">Controle de saldos ativos, histórico de parcelas pagas e cronograma de amortização.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap sm:flex-nowrap">
+                  {/* Busca por Banco ou Contrato */}
+                  <div className="relative flex-1 sm:w-48">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Filtrar por banco/contrato..."
+                      value={contractSearchQuery}
+                      onChange={(e) => setContractSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 font-semibold focus:outline-hidden"
+                    />
+                    {contractSearchQuery && (
+                      <button
+                        onClick={() => setContractSearchQuery('')}
+                        className="absolute right-2 top-2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
                   {consignadosCalculated.length > 0 && (
                     <button
                       onClick={() => setExpandAllTables(!expandAllTables)}
-                      className="text-[10px] px-2.5 py-1 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 font-bold rounded-lg border border-indigo-100 dark:border-indigo-900/40 hover:bg-indigo-100 transition-colors cursor-pointer flex items-center gap-1"
+                      className="text-[10px] px-2.5 py-1.5 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 font-bold rounded-lg border border-indigo-100 dark:border-indigo-900/40 hover:bg-indigo-100 transition-colors cursor-pointer flex items-center gap-1 shrink-0"
                     >
                       {expandAllTables ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                      {expandAllTables ? 'Recolher Todas' : 'Expandir Todas as Tabelas'}
+                      {expandAllTables ? 'Recolher Todas' : 'Expandir Tabelas'}
                     </button>
                   )}
-                  <span className="text-[10px] px-2.5 py-1 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 font-bold rounded-lg border border-zinc-200 dark:border-zinc-800">
-                    Total: {consignadosCalculated.length} contratos
+                  <span className="text-[10px] px-2.5 py-1.5 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 font-bold rounded-lg border border-zinc-200 dark:border-zinc-800 shrink-0">
+                    Total: {consignadosCalculated.length}
                   </span>
                 </div>
               </div>
@@ -904,83 +952,107 @@ export default function Consignados() {
                     <p className="text-[10px] mt-0.5">Use o formulário lateral para cadastrar seu primeiro empréstimo de folha.</p>
                   </div>
                 ) : (
-                  consignadosCalculated.map(item => {
-                    const isExpanded = expandAllTables || expandedLoanId === item.id;
-                    
-                    // Aplicar filtros internos da tabela de amortização
-                    const filteredSchedule = item.schedule.filter(row => {
-                      // Filtro de status
-                      if (tableStatusFilter === 'paid' && !row.isPaid) return false;
-                      if (tableStatusFilter === 'open' && (row.isPaid || (row.dueDate && row.dueDate < todayStr))) return false;
-                      if (tableStatusFilter === 'overdue' && (row.isPaid || !row.dueDate || row.dueDate >= todayStr)) return false;
+                  consignadosCalculated
+                    .filter(item => {
+                      if (!contractSearchQuery.trim()) return true;
+                      const q = contractSearchQuery.toLowerCase().trim();
+                      return (
+                        item.bank.toLowerCase().includes(q) ||
+                        item.contractNumber.toLowerCase().includes(q) ||
+                        (item.loanType && item.loanType.toLowerCase().includes(q))
+                      );
+                    })
+                    .map(item => {
+                      const isExpanded = expandAllTables || expandedLoanId === item.id;
+                      
+                      // Aplicar filtros internos da tabela de amortização
+                      const filteredSchedule = item.schedule.filter(row => {
+                        // Filtro de status
+                        if (tableStatusFilter === 'paid' && !row.isPaid) return false;
+                        if (tableStatusFilter === 'open' && (row.isPaid || (row.dueDate && row.dueDate < todayStr))) return false;
+                        if (tableStatusFilter === 'overdue' && (row.isPaid || !row.dueDate || row.dueDate >= todayStr)) return false;
 
-                      // Filtro de busca por texto (número da parcela ou data)
-                      if (tableSearchQuery.trim()) {
-                        const q = tableSearchQuery.toLowerCase().trim();
-                        const numMatch = row.number.toString().includes(q);
-                        const dateFormatted = safeFormatDate(row.dueDate).toLowerCase();
-                        const dateMatch = dateFormatted.includes(q) || row.dueDate.includes(q);
-                        const valMatch = row.installmentValue.toString().includes(q);
-                        if (!numMatch && !dateMatch && !valMatch) return false;
-                      }
+                        // Filtro de busca por texto (número da parcela ou data)
+                        if (tableSearchQuery.trim()) {
+                          const q = tableSearchQuery.toLowerCase().trim();
+                          const numMatch = row.number.toString().includes(q);
+                          const dateFormatted = safeFormatDate(row.dueDate).toLowerCase();
+                          const dateMatch = dateFormatted.includes(q) || row.dueDate.includes(q);
+                          const valMatch = row.installmentValue.toString().includes(q);
+                          if (!numMatch && !dateMatch && !valMatch) return false;
+                        }
 
-                      return true;
-                    });
+                        return true;
+                      });
 
-                    // Totais do rodapé da tabela
-                    const sumInstallments = item.schedule.reduce((acc, r) => acc + r.installmentValue, 0);
-                    const sumAmortization = item.schedule.reduce((acc, r) => acc + r.amortizationValue, 0);
-                    const sumInterest = item.schedule.reduce((acc, r) => acc + r.interestValue, 0);
+                      // Totais do rodapé da tabela
+                      const sumInstallments = item.schedule.reduce((acc, r) => acc + r.installmentValue, 0);
+                      const sumAmortization = item.schedule.reduce((acc, r) => acc + r.amortizationValue, 0);
+                      const sumInterest = item.schedule.reduce((acc, r) => acc + r.interestValue, 0);
 
-                    return (
-                      <div
-                        key={item.id}
-                        className={`p-5 border rounded-2xl transition-all space-y-4 ${
-                          item.isPaid
-                            ? 'bg-emerald-50/10 border-emerald-200 dark:bg-emerald-950/5 dark:border-emerald-900/30'
-                            : 'bg-zinc-50/20 border-zinc-200 dark:border-zinc-850'
-                        }`}
-                      >
-                        {/* Header do Cartão */}
-                        <div className="flex justify-between items-start gap-4 border-b border-zinc-100 dark:border-zinc-850 pb-3">
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Landmark className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                              <span className="text-xs font-black text-zinc-800 dark:text-zinc-100">{item.bank}</span>
-                              <span className="text-[9px] px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-mono font-black rounded">
-                                Contrato: {item.contractNumber}
-                              </span>
-                              <span className="text-[9px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-400 font-bold rounded">
-                                {item.loanType || 'Consignado'}
-                              </span>
-                              {item.isPaid && (
-                                <span className="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-850 dark:bg-emerald-950/50 dark:text-emerald-400 font-extrabold uppercase tracking-wider rounded-md">
-                                  Quitado
+                      return (
+                        <div
+                          key={item.id}
+                          className={`p-5 border rounded-2xl transition-all space-y-4 ${
+                            item.isPaid
+                              ? 'bg-emerald-50/10 border-emerald-200 dark:bg-emerald-950/5 dark:border-emerald-900/30'
+                              : 'bg-zinc-50/20 border-zinc-200 dark:border-zinc-850'
+                          }`}
+                        >
+                          {/* Header do Cartão */}
+                          <div className="flex justify-between items-start gap-4 border-b border-zinc-100 dark:border-zinc-850 pb-3">
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Landmark className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                                <span 
+                                  onClick={() => setScheduleModalLoan(item)}
+                                  className="text-xs font-black text-zinc-800 dark:text-zinc-100 hover:text-indigo-600 cursor-pointer underline decoration-indigo-300"
+                                  title="Clique para abrir o Cronograma Completo"
+                                >
+                                  {item.bank}
                                 </span>
-                              )}
+                                <span className="text-[9px] px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-mono font-black rounded">
+                                  Contrato: {item.contractNumber}
+                                </span>
+                                <span className="text-[9px] px-1.5 py-0.5 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-400 font-bold rounded">
+                                  {item.loanType || 'Consignado'}
+                                </span>
+                                {item.isPaid && (
+                                  <span className="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-850 dark:bg-emerald-950/50 dark:text-emerald-400 font-extrabold uppercase tracking-wider rounded-md">
+                                    Quitado
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-zinc-400 font-semibold mt-1.5">
+                                Contratado em {safeFormatDate(item.loanDate)} • Sistema: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{item.amortizationSystem || 'Price'}</strong>
+                              </p>
                             </div>
-                            <p className="text-[10px] text-zinc-400 font-semibold mt-1.5">
-                              Contratado em {safeFormatDate(item.loanDate)} • Sistema: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{item.amortizationSystem || 'Price'}</strong>
-                            </p>
-                          </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              onClick={() => handleStartEdit(item)}
-                              className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-600 cursor-pointer transition-colors"
-                              title="Editar contrato"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => deleteConsignado(item.id)}
-                              className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-rose-600 cursor-pointer transition-colors"
-                              title="Excluir contrato"
-                            >
-                              <Trash className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => setScheduleModalLoan(item)}
+                                className="px-2.5 py-1 text-[10px] font-black bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 rounded-lg border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer flex items-center gap-1"
+                                title="Abrir Cronograma Completo em Tela Cheia"
+                              >
+                                <CalendarDays className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                                <span>Cronograma Completo</span>
+                              </button>
+                              <button
+                                onClick={() => handleStartEdit(item)}
+                                className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-indigo-600 cursor-pointer transition-colors"
+                                title="Editar contrato"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => deleteConsignado(item.id)}
+                                className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-rose-600 cursor-pointer transition-colors"
+                                title="Excluir contrato"
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
 
                         {/* Demonstrativo Contábil */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-1">
@@ -1052,16 +1124,14 @@ export default function Consignados() {
                               )}
                             </button>
 
-                            {isExpanded && (
-                              <button
-                                onClick={() => setScheduleModalLoan(item)}
-                                className="flex items-center gap-1 text-[10px] font-bold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
-                                title="Abrir Tabela em Tela Cheia / Exportar"
-                              >
-                                <Maximize2 className="w-3.5 h-3.5" />
-                                Tela Cheia
-                              </button>
-                            )}
+                            <button
+                              onClick={() => setScheduleModalLoan(item)}
+                              className="flex items-center gap-1.5 text-[11px] font-black text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 cursor-pointer bg-indigo-50 dark:bg-indigo-950/50 px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800 transition-colors"
+                              title="Abrir Tabela de Amortização em Tela Cheia / Exportar / Imprimir"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                              Cronograma Completo (Tela Cheia)
+                            </button>
                           </div>
                           
                           <div className="flex items-center gap-2">

@@ -115,37 +115,11 @@ export function mergeFinancialData(localData: FinancialData, remoteData: Financi
   const localTime = localData.updatedAt ? new Date(localData.updatedAt).getTime() : 0;
   const remoteTime = remoteData.updatedAt ? new Date(remoteData.updatedAt).getTime() : 0;
 
-  const mergeList = <T extends { id: string }>(primaryList: T[] = [], secondaryList: T[] = []): T[] => {
-    const map = new Map<string, T>();
-    (secondaryList || []).forEach(item => {
-      if (item && item.id) map.set(item.id, item);
-    });
-    (primaryList || []).forEach(item => {
-      if (item && item.id) map.set(item.id, item);
-    });
-    return Array.from(map.values());
-  };
-
-  const primary = localTime >= remoteTime ? localData : remoteData;
-  const secondary = localTime >= remoteTime ? remoteData : localData;
-
-  const merged: FinancialData = {
-    salaries: mergeList(primary.salaries, secondary.salaries),
-    fixedExpenses: mergeList(primary.fixedExpenses, secondary.fixedExpenses),
-    variableExpenses: mergeList(primary.variableExpenses, secondary.variableExpenses),
-    consignados: mergeList(primary.consignados, secondary.consignados),
-    creditCards: mergeList(primary.creditCards, secondary.creditCards),
-    cardPurchases: mergeList(primary.cardPurchases, secondary.cardPurchases),
-    savingsGoals: mergeList(primary.savingsGoals, secondary.savingsGoals),
-    emergencyFund: primary.emergencyFund || secondary.emergencyFund || { targetValue: 0, currentValue: 0 },
-    investments: mergeList(primary.investments, secondary.investments),
-    patrimonyItems: mergeList(primary.patrimonyItems, secondary.patrimonyItems),
-    fixedCategories: mergeList(primary.fixedCategories, secondary.fixedCategories),
-    variableCategories: mergeList(primary.variableCategories, secondary.variableCategories),
-    updatedAt: new Date(Math.max(localTime, remoteTime, Date.now())).toISOString()
-  };
-
-  return ensureMoradiaAluguel(merged);
+  if (localTime >= remoteTime) {
+    return ensureMoradiaAluguel(localData);
+  } else {
+    return ensureMoradiaAluguel(remoteData);
+  }
 }
 
 interface FinancialContextType {
@@ -904,9 +878,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...salary,
       id: `sal-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      salaries: [...prev.salaries, newSalary]
+      salaries: [...prev.salaries, newSalary],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Salários', `Salário "${salary.description}" adicionado. Valor: R$ ${salary.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
@@ -918,7 +893,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Salários', `Salário "${existing.description}" atualizado.`);
       }
-      return { ...prev, salaries: updatedList };
+      return ensureMoradiaAluguel({ ...prev, salaries: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -928,10 +903,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Salários', `Salário "${existing.description}" excluído.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        salaries: prev.salaries.filter(s => s.id !== id)
-      };
+        salaries: prev.salaries.filter(s => s.id !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1210,9 +1186,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...consignado,
       id: `con-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      consignados: [...prev.consignados, newConsignado]
+      consignados: [...prev.consignados, newConsignado],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Consignados', `Empréstimo consignado do banco "${consignado.bank}" adicionado. Valor total: R$ ${consignado.borrowedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
@@ -1224,7 +1201,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Consignados', `Consignado do banco "${existing.bank}" atualizado.`);
       }
-      return { ...prev, consignados: updatedList };
+      return ensureMoradiaAluguel({ ...prev, consignados: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1234,10 +1211,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Consignados', `Consignado do banco "${existing.bank}" excluído.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        consignados: prev.consignados.filter(c => c.id !== id)
-      };
+        consignados: prev.consignados.filter(c => c.id !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1247,9 +1225,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...card,
       id: `card-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      creditCards: [...prev.creditCards, newCard]
+      creditCards: [...prev.creditCards, newCard],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Cartões', `Cartão de crédito "${card.cardName}" adicionado. Limite: R$ ${card.limit.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
@@ -1261,7 +1240,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Cartões', `Cartão de crédito "${existing.cardName}" atualizado.`);
       }
-      return { ...prev, creditCards: updatedList };
+      return ensureMoradiaAluguel({ ...prev, creditCards: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1271,11 +1250,12 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Cartões', `Cartão de crédito "${existing.cardName}" e todas as compras atreladas a ele foram excluídos.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
         creditCards: prev.creditCards.filter(c => c.id !== id),
-        cardPurchases: prev.cardPurchases.filter(p => p.cardId !== id)
-      };
+        cardPurchases: prev.cardPurchases.filter(p => p.cardId !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1285,9 +1265,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...purchase,
       id: `pur-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      cardPurchases: [...prev.cardPurchases, newPurchase]
+      cardPurchases: [...prev.cardPurchases, newPurchase],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Cartões', `Compra parcelada "${purchase.description}" adicionada. Valor total: R$ ${purchase.totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em ${purchase.totalInstallments}x`);
   };
@@ -1299,7 +1280,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Cartões', `Compra "${existing.description}" atualizada.`);
       }
-      return { ...prev, cardPurchases: updatedList };
+      return ensureMoradiaAluguel({ ...prev, cardPurchases: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1309,10 +1290,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Cartões', `Compra "${existing.description}" excluída.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        cardPurchases: prev.cardPurchases.filter(p => p.id !== id)
-      };
+        cardPurchases: prev.cardPurchases.filter(p => p.id !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1327,7 +1309,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         newGoals = [...prev.savingsGoals, { id: `goal-${Date.now()}`, targetAmount: amount, targetMonth: month, notes }];
       }
       addAuditLog('ATUALIZAR_REGISTRO', 'Metas de Poupança', `Meta de poupança para ${month} definida para R$ ${amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`);
-      return { ...prev, savingsGoals: newGoals };
+      return ensureMoradiaAluguel({ ...prev, savingsGoals: newGoals, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1335,10 +1317,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
   const updateEmergencyFund = (fund: Partial<EmergencyFund>) => {
     setData(prev => {
       addAuditLog('ATUALIZAR_REGISTRO', 'Reserva de Emergência', `Reserva de emergência atualizada.`);
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        emergencyFund: { ...prev.emergencyFund, ...fund }
-      };
+        emergencyFund: { ...prev.emergencyFund, ...fund },
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1348,9 +1331,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...investment,
       id: `inv-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      investments: [...prev.investments, newInvestment]
+      investments: [...prev.investments, newInvestment],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Investimentos', `Investimento "${investment.name}" de tipo ${investment.type} adicionado. Valor: R$ ${investment.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
@@ -1362,7 +1346,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Investimentos', `Investimento "${existing.name}" atualizado.`);
       }
-      return { ...prev, investments: updatedList };
+      return ensureMoradiaAluguel({ ...prev, investments: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1372,10 +1356,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Investimentos', `Investimento "${existing.name}" excluído.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        investments: prev.investments.filter(i => i.id !== id)
-      };
+        investments: prev.investments.filter(i => i.id !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1385,9 +1370,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...item,
       id: `pat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      patrimonyItems: [...prev.patrimonyItems, newItem]
+      patrimonyItems: [...prev.patrimonyItems, newItem],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Patrimônio', `Item de patrimônio "${item.name}" adicionado. Valor estimado: R$ ${item.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
   };
@@ -1399,7 +1385,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Patrimônio', `Item de patrimônio "${existing.name}" atualizado.`);
       }
-      return { ...prev, patrimonyItems: updatedList };
+      return ensureMoradiaAluguel({ ...prev, patrimonyItems: updatedList, updatedAt: new Date().toISOString() });
     });
   };
 
@@ -1409,10 +1395,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing) {
         addAuditLog('EXCLUIR_REGISTRO', 'Patrimônio', `Item de patrimônio "${existing.name}" excluído.`);
       }
-      return {
+      return ensureMoradiaAluguel({
         ...prev,
-        patrimonyItems: prev.patrimonyItems.filter(p => p.id !== id)
-      };
+        patrimonyItems: prev.patrimonyItems.filter(p => p.id !== id),
+        updatedAt: new Date().toISOString()
+      });
     });
   };
 
@@ -1422,9 +1409,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...category,
       id: `fcat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      fixedCategories: [...(prev.fixedCategories || []), newCat]
+      fixedCategories: [...(prev.fixedCategories || []), newCat],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Categorias', `Categoria fixa "${category.name}" cadastrada.`);
   };
@@ -1433,7 +1421,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     setData(prev => {
       const list = prev.fixedCategories || [];
       const updatedList = list.map(c => c.id === id ? { ...c, ...updated } : c);
-      return { ...prev, fixedCategories: updatedList };
+      return ensureMoradiaAluguel({ ...prev, fixedCategories: updatedList, updatedAt: new Date().toISOString() });
     });
     addAuditLog('ATUALIZAR_REGISTRO', 'Categorias', `Categoria fixa atualizada.`);
   };
@@ -1442,7 +1430,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     setData(prev => {
       const list = prev.fixedCategories || [];
       const filtered = list.filter(c => c.id !== id);
-      return { ...prev, fixedCategories: filtered };
+      return ensureMoradiaAluguel({ ...prev, fixedCategories: filtered, updatedAt: new Date().toISOString() });
     });
     addAuditLog('EXCLUIR_REGISTRO', 'Categorias', `Categoria fixa excluída.`);
   };
@@ -1452,9 +1440,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ...category,
       id: `vcat-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`
     };
-    setData(prev => ({
+    setData(prev => ensureMoradiaAluguel({
       ...prev,
-      variableCategories: [...(prev.variableCategories || []), newCat]
+      variableCategories: [...(prev.variableCategories || []), newCat],
+      updatedAt: new Date().toISOString()
     }));
     addAuditLog('ADICIONAR_REGISTRO', 'Categorias', `Categoria variável "${category.name}" cadastrada.`);
   };
@@ -1463,7 +1452,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     setData(prev => {
       const list = prev.variableCategories || [];
       const updatedList = list.map(c => c.id === id ? { ...c, ...updated } : c);
-      return { ...prev, variableCategories: updatedList };
+      return ensureMoradiaAluguel({ ...prev, variableCategories: updatedList, updatedAt: new Date().toISOString() });
     });
     addAuditLog('ATUALIZAR_REGISTRO', 'Categorias', `Categoria variável atualizada.`);
   };
@@ -1472,7 +1461,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     setData(prev => {
       const list = prev.variableCategories || [];
       const filtered = list.filter(c => c.id !== id);
-      return { ...prev, variableCategories: filtered };
+      return ensureMoradiaAluguel({ ...prev, variableCategories: filtered, updatedAt: new Date().toISOString() });
     });
     addAuditLog('EXCLUIR_REGISTRO', 'Categorias', `Categoria variável excluída.`);
   };

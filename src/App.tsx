@@ -43,6 +43,14 @@ import {
 function DashboardShell() {
   const { data, updateConsignado, selectedYear, setSelectedYear, selectedMonth, setSelectedMonth, currentUser, logoutUser } = useFinancial();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'salaries' | 'fixed' | 'variable' | 'consignados' | 'cards' | 'investments' | 'reports' | 'users-admin'>('dashboard');
+  const [consignadoBankFilter, setConsignadoBankFilter] = useState<string | undefined>(undefined);
+
+  const handleNavigateTab = (tab: string, bankFilter?: string) => {
+    setActiveTab(tab as any);
+    if (bankFilter !== undefined) {
+      setConsignadoBankFilter(bankFilter);
+    }
+  };
 
   // Controle de prompt de consignados vencendo no mês atual
   const [dismissedConsignadoPrompt, setDismissedConsignadoPrompt] = useState(false);
@@ -392,11 +400,11 @@ function DashboardShell() {
 
         {/* 4. VISÃO DE TRABALHO ATIVA */}
         <div className="flex-1 p-6 overflow-y-auto max-w-7xl mx-auto w-full">
-          {activeTab === 'dashboard' && <Dashboard />}
+          {activeTab === 'dashboard' && <Dashboard onNavigateTab={handleNavigateTab} />}
           {activeTab === 'salaries' && <Salaries />}
           {activeTab === 'fixed' && <FixedExpenses />}
           {activeTab === 'variable' && <VariableExpenses />}
-          {activeTab === 'consignados' && <Consignados />}
+          {activeTab === 'consignados' && <Consignados targetBankFilter={consignadoBankFilter} />}
           {activeTab === 'cards' && <CreditCards />}
           {activeTab === 'investments' && <Investments />}
           {activeTab === 'reports' && <Reports />}
