@@ -10,25 +10,45 @@ import {
   Plus, Trash, Edit2, Check, X, Landmark, Percent, Award, 
   ShieldAlert, Sparkles, ChevronDown, ChevronUp, CheckCircle, Clock, CalendarDays,
   Coins, TrendingDown, ArrowRight, History, BarChart3, AlertTriangle, FileSpreadsheet,
-  CheckSquare, HelpCircle, Activity, PiggyBank
+  CheckSquare, HelpCircle, Activity, PiggyBank, Search, Maximize2, Download, Printer, Eye,
+  SlidersHorizontal, CheckCheck
 } from 'lucide-react';
+
+// Formatação segura de datas sem gerar exceções Invalid Date
+export const safeFormatDate = (dateStr?: string, fallback = '—'): string => {
+  if (!dateStr || typeof dateStr !== 'string' || !dateStr.trim()) return fallback;
+  try {
+    const cleanStr = dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00`;
+    const d = new Date(cleanStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('pt-BR');
+  } catch {
+    return dateStr || fallback;
+  }
+};
 
 // Helper de vencimento de parcelas (1-indexado)
 const calculateInstallmentDueDate = (firstPaymentDateStr: string, instIndex: number): string => {
-  if (!firstPaymentDateStr) return '';
-  const firstDate = new Date(firstPaymentDateStr + 'T00:00:00');
-  const year = firstDate.getFullYear();
-  const month = firstDate.getMonth(); // 0-11
-  const day = firstDate.getDate();
+  if (!firstPaymentDateStr || typeof firstPaymentDateStr !== 'string') return '';
+  try {
+    const cleanStr = firstPaymentDateStr.includes('T') ? firstPaymentDateStr : `${firstPaymentDateStr}T00:00:00`;
+    const firstDate = new Date(cleanStr);
+    if (isNaN(firstDate.getTime())) return '';
+    const year = firstDate.getFullYear();
+    const month = firstDate.getMonth(); // 0-11
+    const day = firstDate.getDate();
 
-  const targetDate = new Date(year, month + (instIndex - 1), day);
-  const targetYear = targetDate.getFullYear();
-  const targetMonth = targetDate.getMonth();
-  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
-  const clampedDay = Math.min(day, lastDayOfTargetMonth);
+    const targetDate = new Date(year, month + (instIndex - 1), day);
+    const targetYear = targetDate.getFullYear();
+    const targetMonth = targetDate.getMonth();
+    const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+    const clampedDay = Math.min(day, lastDayOfTargetMonth);
 
-  const finalDate = new Date(targetYear, targetMonth, clampedDay);
-  return finalDate.toISOString().split('T')[0];
+    const finalDate = new Date(targetYear, targetMonth, clampedDay);
+    return finalDate.toISOString().split('T')[0];
+  } catch {
+    return '';
+  }
 };
 
 export interface AmortizationRow {
@@ -38,6 +58,7 @@ export interface AmortizationRow {
   interestValue: number;
   amortizationValue: number;
   endingBalance: number;
+  totalPaid: number; // Valor acumulado de prestações pagas até a parcela k
   isPaid: boolean;
   paymentDate?: string;
 }
@@ -48,22 +69,34 @@ export function calculateAmortizationSchedule(
   interestRateMonthly: number,
   totalInstallments: number,
   firstPaymentDateStr: string,
-  amortizationSystem: 'Price' | 'SAC' | 'Personalizado',
-  manualInstallmentValue: number,
+  amortizationSystem: 'Price' | 'SAC' | 'Personalizado' = 'Price',
+  manualInstallmentValue: number = 0,
   paidInstallmentsList: number[] = [],
   paymentConfirmationDates: Record<number, string> = {}
 ): AmortizationRow[] {
   const schedule: AmortizationRow[] = [];
-  let balance = borrowedAmount;
-  const rate = interestRateMonthly / 100;
-  const n = totalInstallments;
+  const borrowed = Number(borrowedAmount) || 0;
+  const n = Number(totalInstallments) || 0;
+  const rate = (Number(interestRateMonthly) || 0) / 100;
+
+  if (borrowed <= 0 || n <= 0) {
+    return schedule;
+  }
+
+  let balance = borrowed;
 
   let pmt = 0;
-  if (amortizationSystem === 'Price' && rate > 0) {
-    pmt = borrowedAmount * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
-  } else if (amortizationSystem === 'Price') {
-    pmt = borrowedAmount / n;
+  if (amortizationSystem === 'Price') {
+    if (manualInstallmentValue && manualInstallmentValue > 0) {
+      pmt = manualInstallmentValue;
+    } else if (rate > 0) {
+      pmt = borrowed * (rate * Math.pow(1 + rate, n)) / (Math.pow(1 + rate, n) - 1);
+    } else {
+      pmt = borrowed / n;
+    }
   }
+
+  let cumulativePaid = 0;
 
   for (let k = 1; k <= n; k++) {
     const dueDate = calculateInstallmentDueDate(firstPaymentDateStr, k);
@@ -72,33 +105,32 @@ export function calculateAmortizationSchedule(
     let amortVal = 0;
 
     if (amortizationSystem === 'SAC') {
-      amortVal = borrowedAmount / n;
+      amortVal = borrowed / n;
       intVal = balance * rate;
       instVal = amortVal + intVal;
     } else if (amortizationSystem === 'Price') {
       instVal = pmt;
       intVal = balance * rate;
       amortVal = instVal - intVal;
+      if (amortVal < 0) amortVal = 0;
     } else {
       // Personalizado
-      instVal = manualInstallmentValue || (borrowedAmount / n);
+      instVal = (manualInstallmentValue && manualInstallmentValue > 0) ? manualInstallmentValue : (borrowed / n);
       intVal = balance * rate;
       amortVal = instVal - intVal;
       if (amortVal < 0) amortVal = 0;
     }
 
-    // Ajuste de arredondamento no último período
-    if (k === n || balance - amortVal < 0.05) {
+    // Ajuste no último período ou quando o saldo restante for irrelevante
+    if (k === n || (balance - amortVal) < 0.05) {
       amortVal = balance;
-      if (amortizationSystem === 'SAC') {
-        instVal = amortVal + intVal;
-      } else if (amortizationSystem === 'Price') {
-        instVal = amortVal + intVal;
-      }
+      instVal = amortVal + intVal;
       balance = 0;
     } else {
       balance = balance - amortVal;
     }
+
+    cumulativePaid += instVal;
 
     schedule.push({
       number: k,
@@ -107,6 +139,7 @@ export function calculateAmortizationSchedule(
       interestValue: intVal,
       amortizationValue: amortVal,
       endingBalance: Math.max(0, balance),
+      totalPaid: cumulativePaid,
       isPaid: paidInstallmentsList.includes(k),
       paymentDate: paymentConfirmationDates[k]
     });
@@ -124,8 +157,19 @@ export default function Consignados() {
   // Controle de alertas e banners de parcelas vencidas
   const [showOverdueAlert, setShowOverdueAlert] = useState(true);
 
-  // Estado para expandir extrato de parcelas do consignado
+  // Controle de expansão de tabelas de parcelas
   const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
+  const [expandAllTables, setExpandAllTables] = useState(false);
+
+  // Modal para visualização em tela cheia da Tabela de Amortização
+  const [scheduleModalLoan, setScheduleModalLoan] = useState<(Consignado & { schedule: AmortizationRow[] }) | null>(null);
+
+  // Filtros internos da tabela
+  const [tableSearchQuery, setTableSearchQuery] = useState('');
+  const [tableStatusFilter, setTableStatusFilter] = useState<'all' | 'paid' | 'open' | 'overdue'>('all');
+
+  // Preview em tempo real da tabela de amortização no formulário de cadastro/edição
+  const [showFormPreview, setShowFormPreview] = useState(false);
 
   // Estados de formulário para cadastro/edição
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -150,6 +194,9 @@ export default function Consignados() {
   const [simDate, setSimDate] = useState(new Date().toISOString().split('T')[0]);
   const [settlementSuccessMsg, setSettlementSuccessMsg] = useState<string | null>(null);
 
+  // Data atual para comparações de vencimento (Formato AAAA-MM-DD)
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
   // Sincronizar taxas de juros Mensal e Anual no formulário
   useEffect(() => {
     if (formInterest !== '' && !isNaN(Number(formInterest))) {
@@ -164,8 +211,14 @@ export default function Consignados() {
   // Sincronizar dia de vencimento com a data do primeiro pagamento
   useEffect(() => {
     if (formFirstPayDate) {
-      const d = new Date(formFirstPayDate + 'T00:00:00');
-      setFormDueDay(d.getDate());
+      try {
+        const d = new Date(formFirstPayDate + 'T00:00:00');
+        if (!isNaN(d.getTime())) {
+          setFormDueDay(d.getDate());
+        }
+      } catch {
+        // Silencioso
+      }
     }
   }, [formFirstPayDate]);
 
@@ -186,7 +239,6 @@ export default function Consignados() {
         }
         setFormInstValue(Number(pmt.toFixed(2)));
       } else if (formAmortizationSystem === 'SAC') {
-        // No SAC o valor da primeira parcela é o teto máximo (Amortização + Juros sobre saldo inicial)
         const constantAmort = pv / n;
         const initialInterest = pv * monthlyRate;
         const firstPmt = constantAmort + initialInterest;
@@ -220,6 +272,7 @@ export default function Consignados() {
     setFormCetRate('');
     setFormIsPaid(false);
     setEditingId(null);
+    setShowFormPreview(false);
   };
 
   const handleStartEdit = (c: Consignado) => {
@@ -238,6 +291,7 @@ export default function Consignados() {
     setFormDueDay(c.dueDay !== undefined ? c.dueDay : '');
     setFormCetRate(c.cetRate !== undefined ? c.cetRate : '');
     setFormIsPaid(c.isPaid);
+    setExpandedLoanId(c.id);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -273,8 +327,14 @@ export default function Consignados() {
 
     if (editingId) {
       updateConsignado(editingId, loanData);
+      setExpandedLoanId(editingId);
     } else {
       addConsignado(loanData);
+      // Auto-expandir o novo contrato
+      setTimeout(() => {
+        const newlyAdded = data.consignados[data.consignados.length - 1];
+        if (newlyAdded) setExpandedLoanId(newlyAdded.id);
+      }, 100);
     }
     resetForm();
   };
@@ -308,10 +368,23 @@ export default function Consignados() {
     });
   };
 
-  // --- CONTROLE AUTOMÁTICO DE PAGAMENTOS ---
-  // Varre todos os contratos ativos e busca parcelas não pagas que venceram antes de HOJE (2026-07-20)
-  const todayStr = '2026-07-20';
+  // Marcar todas as parcelas de um empréstimo como pagas
+  const handleMarkAllPaid = (c: Consignado) => {
+    const allNumbers = Array.from({ length: c.totalInstallments }, (_, i) => i + 1);
+    const nextDates: Record<number, string> = {};
+    const today = new Date().toISOString().split('T')[0];
+    allNumbers.forEach(num => {
+      nextDates[num] = c.paymentConfirmationDates?.[num] || today;
+    });
 
+    updateConsignado(c.id, {
+      paidInstallmentsList: allNumbers,
+      isPaid: true,
+      paymentConfirmationDates: nextDates
+    });
+  };
+
+  // --- CONTROLE AUTOMÁTICO DE PAGAMENTOS ---
   const overdueInstallments = useMemo(() => {
     const list: Array<{ loan: Consignado; instNum: number; dueDate: string; value: number }> = [];
     data.consignados.forEach(c => {
@@ -329,7 +402,7 @@ export default function Consignados() {
       );
 
       schedule.forEach(row => {
-        if (!row.isPaid && row.dueDate < todayStr) {
+        if (!row.isPaid && row.dueDate && row.dueDate < todayStr) {
           list.push({
             loan: c,
             instNum: row.number,
@@ -340,7 +413,7 @@ export default function Consignados() {
       });
     });
     return list;
-  }, [data.consignados]);
+  }, [data.consignados, todayStr]);
 
   // Executa o pagamento automático de todas as parcelas vencidas
   const handleAutoPayOverdue = () => {
@@ -351,7 +424,7 @@ export default function Consignados() {
         const nextPaidList = [...paidList, item.instNum];
         const isNowFullyPaid = nextPaidList.length >= c.totalInstallments;
         const nextDates = { ...c.paymentConfirmationDates };
-        nextDates[item.instNum] = item.dueDate; // Apropria o pagamento na data de vencimento correspondente
+        nextDates[item.instNum] = item.dueDate || todayStr;
 
         updateConsignado(c.id, {
           paidInstallmentsList: nextPaidList,
@@ -379,7 +452,6 @@ export default function Consignados() {
 
       const paidList = c.paidInstallmentsList || [];
       
-      // Totais calculados com base nas parcelas pagas reais
       let totalPaidValue = 0;
       let totalPaidAmortization = 0;
       let totalPaidInterest = 0;
@@ -420,6 +492,26 @@ export default function Consignados() {
     });
   }, [data.consignados]);
 
+  // Cálculo da tabela de preview para o formulário
+  const formPreviewSchedule = useMemo(() => {
+    const pv = Number(formBorrowed);
+    const r = Number(formInterest);
+    const n = Number(formTotalInst);
+    const instVal = Number(formInstValue);
+
+    if (pv > 0 && n > 0) {
+      return calculateAmortizationSchedule(
+        pv,
+        r,
+        n,
+        formFirstPayDate || new Date().toISOString().split('T')[0],
+        formAmortizationSystem,
+        instVal
+      );
+    }
+    return [];
+  }, [formBorrowed, formInterest, formTotalInst, formFirstPayDate, formAmortizationSystem, formInstValue]);
+
   // Métricas Consolidadas do Painel
   const consolidatedMetrics = useMemo(() => {
     let totalBorrowed = 0;
@@ -444,7 +536,6 @@ export default function Consignados() {
         activeLoansCount++;
       }
 
-      // Sum economy from early settlements
       if (c.earlySettlementHistory) {
         c.earlySettlementHistory.forEach(settle => {
           totalInterestSaved += settle.economyAmount;
@@ -464,7 +555,7 @@ export default function Consignados() {
     };
   }, [consignadosCalculated]);
 
-  // Saldos Restantes por Banco Credor (Para o Dashboard superior)
+  // Distribuição de saldos devedores por Banco
   const bankDashboard = useMemo(() => {
     const map: Record<string, number> = {
       'Banco do Brasil': 0,
@@ -475,7 +566,7 @@ export default function Consignados() {
 
     consignadosCalculated.forEach(c => {
       if (c.isPaid) return;
-      const bank = c.bank;
+      const bank = c.bank || '';
       if (bank.includes('Brasil') || bank.includes('BB')) {
         map['Banco do Brasil'] += c.totalRemainingAmortization;
       } else if (bank.includes('Caixa') || bank.includes('CEF')) {
@@ -505,16 +596,14 @@ export default function Consignados() {
     let amortizationPaid = 0;
     
     let interestDiscount = 0;
-    let amortizationPending = 0; // Este é o saldo devedor atualizado necessário para quitação na data informada
+    let amortizationPending = 0;
 
     schedule.forEach(row => {
-      // Se a parcela vence até a data de simulação ou já está paga
-      if (row.dueDate <= simDate || row.isPaid) {
+      if ((row.dueDate && row.dueDate <= simDate) || row.isPaid) {
         paidValue += row.installmentValue;
         interestPaid += row.interestValue;
         amortizationPaid += row.amortizationValue;
       } else {
-        // Parcela futura que será amortizada sem juros
         interestDiscount += row.interestValue;
         amortizationPending += row.amortizationValue;
       }
@@ -540,7 +629,6 @@ export default function Consignados() {
   const handleRegisterSettlement = () => {
     if (!selectedSimLoan || !simulationResult) return;
 
-    // Criar item de histórico de liquidação
     const newSettlement = {
       settlementDate: simDate,
       paidValue: simulationResult.amortizationPending,
@@ -555,7 +643,6 @@ export default function Consignados() {
     const currentHistory = selectedSimLoan.earlySettlementHistory || [];
     const nextHistory = [...currentHistory, newSettlement];
 
-    // Marcar todas as parcelas do cronograma como pagas
     const allInstallmentNums = Array.from({ length: selectedSimLoan.totalInstallments }, (_, i) => i + 1);
     const nextConfirmationDates = { ...selectedSimLoan.paymentConfirmationDates };
     allInstallmentNums.forEach(num => {
@@ -571,11 +658,11 @@ export default function Consignados() {
       earlySettlementHistory: nextHistory
     });
 
-    setSettlementSuccessMsg(`Quitação antecipada registrada com sucesso! Economia de juros obtida: R$ ${simulationResult.economyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`);
-    setTimeout(() => setSettlementSuccessMsg(null), 7000);
+    setSettlementSuccessMsg(`Quitação do contrato ${selectedSimLoan.contractNumber} (${selectedSimLoan.bank}) registrada com sucesso! Economia de R$ ${simulationResult.economyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`);
+    setTimeout(() => setSettlementSuccessMsg(null), 8000);
   };
 
-  // --- LISTA CONSOLIDADA DE LIQUIDAÇÕES REALIZADAS ---
+  // Histórico Consolidado de Quitações
   const settlementHistoryList = useMemo(() => {
     const list: Array<{
       loanId: string;
@@ -606,13 +693,35 @@ export default function Consignados() {
     return list.sort((a, b) => b.settlementDate.localeCompare(a.settlementDate));
   }, [data.consignados]);
 
+  // Função para exportar/imprimir a Tabela de Amortização
+  const handleExportScheduleText = (loan: Consignado & { schedule: AmortizationRow[] }) => {
+    let text = `CRONOGRAMA DE AMORTIZAÇÃO DE FINANCIAMENTO\n`;
+    text += `Instituição: ${loan.bank} | Contrato: ${loan.contractNumber} | Tipo: ${loan.loanType || 'Consignado'}\n`;
+    text += `Sistema: ${loan.amortizationSystem || 'Price'} | Valor Financiado: R$ ${loan.borrowedAmount.toFixed(2)} | Taxa: ${loan.interestRate}% a.m.\n`;
+    text += `----------------------------------------------------------------------------------------------------------------\n`;
+    text += `Nº\tVencimento\tPrestação\tAmortização\tJuros\t\tSaldo Devedor\tTotal Pago\tStatus\n`;
+    text += `----------------------------------------------------------------------------------------------------------------\n`;
+
+    loan.schedule.forEach(row => {
+      const dateStr = safeFormatDate(row.dueDate);
+      const status = row.isPaid ? 'PAGO' : (row.dueDate < todayStr ? 'ATRASADO' : 'EM ABERTO');
+      text += `${row.number}\t${dateStr}\tR$ ${row.installmentValue.toFixed(2)}\tR$ ${row.amortizationValue.toFixed(2)}\tR$ ${row.interestValue.toFixed(2)}\tR$ ${row.endingBalance.toFixed(2)}\tR$ ${row.totalPaid.toFixed(2)}\t${status}\n`;
+    });
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tabela_amortizacao_${loan.bank.replace(/\s+/g, '_')}_${loan.contractNumber}.txt`;
+    link.click();
+  };
 
   return (
     <div id="consignados-advanced-panel" className="space-y-6 animate-fade-in text-zinc-800 dark:text-zinc-200">
       
-      {/* ⚠️ BANNER DE AVISO DE PARCELAS VENCIDAS (CONTROLE AUTOMÁTICO DE PAGAMENTOS) */}
+      {/* BANNER DE PARCELAS VENCIDAS */}
       {overdueInstallments.length > 0 && showOverdueAlert && (
-        <div id="overdue-payment-alert" className="bg-amber-50 border-l-4 border-amber-500 dark:bg-amber-950/20 dark:border-amber-500 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+        <div id="overdue-payment-alert" className="bg-amber-50 border-l-4 border-amber-500 dark:bg-amber-950/20 dark:border-amber-500 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xs">
           <div className="flex gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
             <div>
@@ -623,7 +732,7 @@ export default function Consignados() {
               <div className="mt-2 text-[10px] text-amber-500 space-y-0.5 max-h-24 overflow-y-auto">
                 {overdueInstallments.map((x, idx) => (
                   <div key={idx}>
-                    • Parcela {x.instNum} de {x.loan.bank} ({x.loan.contractNumber}) - Venceu em {new Date(x.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')} (R$ {x.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                    • Parcela {x.instNum} de {x.loan.bank} ({x.loan.contractNumber}) - Venceu em {safeFormatDate(x.dueDate)} (R$ {x.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
                   </div>
                 ))}
               </div>
@@ -632,7 +741,7 @@ export default function Consignados() {
           <div className="flex gap-2 w-full sm:w-auto shrink-0">
             <button
               onClick={handleAutoPayOverdue}
-              className="flex-1 sm:flex-none px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-black rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-sm"
+              className="flex-1 sm:flex-none px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-black rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-xs"
             >
               <Check className="w-3.5 h-3.5" />
               Sim, pagar todas
@@ -766,14 +875,25 @@ export default function Consignados() {
           {/* LADO ESQUERDO: LISTA DE CONTRATOS */}
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-5 rounded-2xl shadow-xs">
-              <div className="flex justify-between items-center mb-3">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-850">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">Meus Empréstimos Consignados</h3>
-                  <p className="text-xs text-zinc-500 font-medium">Controle de saldos ativos, histórico de parcelas pagas e sistema de amortização.</p>
+                  <p className="text-xs text-zinc-500 font-medium">Controle de saldos ativos, histórico de parcelas pagas e cronograma de amortização.</p>
                 </div>
-                <span className="text-[10px] px-2.5 py-1 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 font-bold rounded-lg border border-zinc-200 dark:border-zinc-800">
-                  Total: {consignadosCalculated.length} contratos
-                </span>
+                <div className="flex items-center gap-2">
+                  {consignadosCalculated.length > 0 && (
+                    <button
+                      onClick={() => setExpandAllTables(!expandAllTables)}
+                      className="text-[10px] px-2.5 py-1 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 font-bold rounded-lg border border-indigo-100 dark:border-indigo-900/40 hover:bg-indigo-100 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      {expandAllTables ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      {expandAllTables ? 'Recolher Todas' : 'Expandir Todas as Tabelas'}
+                    </button>
+                  )}
+                  <span className="text-[10px] px-2.5 py-1 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 font-bold rounded-lg border border-zinc-200 dark:border-zinc-800">
+                    Total: {consignadosCalculated.length} contratos
+                  </span>
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -785,7 +905,33 @@ export default function Consignados() {
                   </div>
                 ) : (
                   consignadosCalculated.map(item => {
-                    const isExpanded = expandedLoanId === item.id;
+                    const isExpanded = expandAllTables || expandedLoanId === item.id;
+                    
+                    // Aplicar filtros internos da tabela de amortização
+                    const filteredSchedule = item.schedule.filter(row => {
+                      // Filtro de status
+                      if (tableStatusFilter === 'paid' && !row.isPaid) return false;
+                      if (tableStatusFilter === 'open' && (row.isPaid || (row.dueDate && row.dueDate < todayStr))) return false;
+                      if (tableStatusFilter === 'overdue' && (row.isPaid || !row.dueDate || row.dueDate >= todayStr)) return false;
+
+                      // Filtro de busca por texto (número da parcela ou data)
+                      if (tableSearchQuery.trim()) {
+                        const q = tableSearchQuery.toLowerCase().trim();
+                        const numMatch = row.number.toString().includes(q);
+                        const dateFormatted = safeFormatDate(row.dueDate).toLowerCase();
+                        const dateMatch = dateFormatted.includes(q) || row.dueDate.includes(q);
+                        const valMatch = row.installmentValue.toString().includes(q);
+                        if (!numMatch && !dateMatch && !valMatch) return false;
+                      }
+
+                      return true;
+                    });
+
+                    // Totais do rodapé da tabela
+                    const sumInstallments = item.schedule.reduce((acc, r) => acc + r.installmentValue, 0);
+                    const sumAmortization = item.schedule.reduce((acc, r) => acc + r.amortizationValue, 0);
+                    const sumInterest = item.schedule.reduce((acc, r) => acc + r.interestValue, 0);
+
                     return (
                       <div
                         key={item.id}
@@ -814,7 +960,7 @@ export default function Consignados() {
                               )}
                             </div>
                             <p className="text-[10px] text-zinc-400 font-semibold mt-1.5">
-                              Contratado em {new Date(item.loanDate + 'T00:00:00').toLocaleDateString('pt-BR')} • Amortização: {item.amortizationSystem || 'Price'}
+                              Contratado em {safeFormatDate(item.loanDate)} • Sistema: <strong className="text-indigo-600 dark:text-indigo-400 font-black">{item.amortizationSystem || 'Price'}</strong>
                             </p>
                           </div>
 
@@ -842,26 +988,26 @@ export default function Consignados() {
                             <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Valor Financiado</span>
                             <span className="font-black text-zinc-700 dark:text-zinc-300">R$ {item.borrowedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                             {item.releasedAmount !== undefined && item.releasedAmount !== item.borrowedAmount && (
-                              <span className="text-[9px] text-zinc-400 block font-bold">Líquido: R$ {item.releasedAmount.toLocaleString('pt-BR')}</span>
+                              <span className="text-[9px] text-zinc-400 block font-bold">Líquido: R$ {item.releasedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                             )}
                           </div>
 
                           <div>
                             <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Total Pago</span>
                             <span className="font-black text-emerald-600 dark:text-emerald-400">R$ {item.totalPaidValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                            <span className="text-[9px] text-emerald-500 block font-bold">Amortizado: R$ {item.totalPaidAmortization.toLocaleString('pt-BR')}</span>
+                            <span className="text-[9px] text-emerald-500 block font-bold">Amortizado: R$ {item.totalPaidAmortization.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                           </div>
 
                           <div>
                             <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Juros Pagos</span>
                             <span className="font-black text-amber-600 dark:text-amber-500">R$ {item.totalPaidInterest.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                            <span className="text-[9px] text-zinc-400 block font-medium">Restante: R$ {item.totalRemainingInterest.toLocaleString('pt-BR')}</span>
+                            <span className="text-[9px] text-zinc-400 block font-medium">Restante: R$ {item.totalRemainingInterest.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                           </div>
 
                           <div>
                             <span className="text-[9px] font-extrabold text-zinc-400 uppercase tracking-wider block">Saldo Devedor Residual</span>
                             <span className="font-black text-rose-600 dark:text-rose-400">R$ {item.totalRemainingAmortization.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                            <span className="text-[9px] text-zinc-400 block font-medium">Contrato original: R$ {item.initialContractValue.toLocaleString('pt-BR')}</span>
+                            <span className="text-[9px] text-zinc-400 block font-medium">Contrato original: R$ {item.initialContractValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                           </div>
                         </div>
 
@@ -878,99 +1024,192 @@ export default function Consignados() {
                             ></div>
                           </div>
                           <div className="flex justify-between text-[9px] text-zinc-400 font-bold">
-                            <span>Prestação média: R$ {item.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            <span>Prestação: R$ {item.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                             <span>Taxa contratada: {item.interestRate}% a.m. {item.interestRateYearly ? `(${item.interestRateYearly}% a.a.)` : ''}</span>
                           </div>
                         </div>
 
                         {/* Botão para Expandir Detalhes / Amortização */}
-                        <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-850 flex justify-between items-center">
-                          <button
-                            onClick={() => setExpandedLoanId(isExpanded ? null : item.id)}
-                            className="flex items-center gap-1 text-[11px] font-extrabold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-                          >
-                            {isExpanded ? (
-                              <>
-                                <ChevronUp className="w-4 h-4" />
-                                Ocultar Tabela de Parcelas
-                              </>
-                            ) : (
-                              <>
-                                <ChevronDown className="w-4 h-4" />
-                                Visualizar Tabela de Parcelas (Amortização)
-                              </>
+                        <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-850 flex justify-between items-center gap-2 flex-wrap">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => {
+                                if (expandAllTables) setExpandAllTables(false);
+                                setExpandedLoanId(isExpanded ? null : item.id);
+                              }}
+                              className="flex items-center gap-1.5 text-[11px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-900/40"
+                            >
+                              {isExpanded ? (
+                                <>
+                                  <ChevronUp className="w-4 h-4" />
+                                  Ocultar Tabela de Parcelas
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown className="w-4 h-4" />
+                                  Visualizar Tabela de Parcelas (Amortização)
+                                </>
+                              )}
+                            </button>
+
+                            {isExpanded && (
+                              <button
+                                onClick={() => setScheduleModalLoan(item)}
+                                className="flex items-center gap-1 text-[10px] font-bold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 dark:hover:text-indigo-400 cursor-pointer"
+                                title="Abrir Tabela em Tela Cheia / Exportar"
+                              >
+                                <Maximize2 className="w-3.5 h-3.5" />
+                                Tela Cheia
+                              </button>
                             )}
-                          </button>
+                          </div>
                           
-                          {item.cetRate !== undefined && (
-                            <span className="text-[10px] text-zinc-400 font-extrabold uppercase">
-                              CET: {item.cetRate}% a.a.
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {item.paidInstallmentsCount < item.totalInstallments && (
+                              <button
+                                onClick={() => handleMarkAllPaid(item)}
+                                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer flex items-center gap-1"
+                              >
+                                <CheckCheck className="w-3.5 h-3.5" /> Quitar Todas
+                              </button>
+                            )}
+                            {item.cetRate !== undefined && (
+                              <span className="text-[10px] text-zinc-400 font-extrabold uppercase">
+                                CET: {item.cetRate}% a.a.
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* TABELA ANALÍTICA DE PARCELAS */}
                         {isExpanded && (
-                          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 mt-2 space-y-3">
-                            <div className="flex justify-between items-center border-b pb-2">
-                              <p className="text-[10px] font-black text-indigo-700 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
-                                <CalendarDays className="w-3.5 h-3.5" /> Cronograma de Amortização de Prestações
-                              </p>
-                              <span className="text-[9px] text-zinc-400 font-bold">SAC / Price recalcula saldo após amortizações</span>
+                          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 mt-2 space-y-3 shadow-xs">
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-zinc-100 dark:border-zinc-800 pb-2.5">
+                              <div>
+                                <p className="text-[11px] font-black text-indigo-700 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                                  <CalendarDays className="w-4 h-4" /> Cronograma Completo de Amortização de Prestações
+                                </p>
+                                <p className="text-[10px] text-zinc-400 font-medium">Sistema {item.amortizationSystem || 'Price'}: Cálculo automático de amortização, juros, saldo devedor e acumulado pago.</p>
+                              </div>
+
+                              {/* Filtros da Tabela */}
+                              <div className="flex items-center gap-2 w-full sm:w-auto">
+                                <div className="relative flex-1 sm:w-36">
+                                  <Search className="w-3 h-3 absolute left-2 top-2.5 text-zinc-400" />
+                                  <input
+                                    type="text"
+                                    placeholder="Buscar nº/data..."
+                                    value={tableSearchQuery}
+                                    onChange={(e) => setTableSearchQuery(e.target.value)}
+                                    className="w-full pl-6 pr-2 py-1 text-[10px] rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-semibold focus:outline-hidden"
+                                  />
+                                </div>
+                                <select
+                                  value={tableStatusFilter}
+                                  onChange={(e) => setTableStatusFilter(e.target.value as any)}
+                                  className="text-[10px] p-1 px-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 font-bold focus:outline-hidden"
+                                >
+                                  <option value="all">Todas ({item.totalInstallments})</option>
+                                  <option value="open">Em Aberto</option>
+                                  <option value="paid">Pagas ({item.paidInstallmentsCount})</option>
+                                  <option value="overdue">Atrasadas</option>
+                                </select>
+                              </div>
                             </div>
 
-                            <div className="overflow-x-auto">
+                            <div className="overflow-x-auto max-h-[450px] overflow-y-auto">
                               <table className="w-full text-left border-collapse text-[11px]">
-                                <thead>
-                                  <tr className="border-b border-zinc-100 dark:border-zinc-800 text-zinc-400 font-black uppercase text-[9px] tracking-wider">
-                                    <th className="py-1.5 px-2">Nº</th>
-                                    <th className="py-1.5 px-2">Vencimento</th>
-                                    <th className="py-1.5 px-2 text-right">Valor Parcela</th>
-                                    <th className="py-1.5 px-2 text-right">Juros</th>
-                                    <th className="py-1.5 px-2 text-right">Amortização</th>
-                                    <th className="py-1.5 px-2 text-right">Saldo Devedor</th>
-                                    <th className="py-1.5 px-2 text-center">Status</th>
-                                    <th className="py-1.5 px-2 text-center">Ação</th>
+                                <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800/90 backdrop-blur-xs z-10">
+                                  <tr className="border-b border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-300 font-black uppercase text-[9px] tracking-wider">
+                                    <th className="py-2 px-2 text-center">Nº</th>
+                                    <th className="py-2 px-2">Vencimento</th>
+                                    <th className="py-2 px-2 text-right">Valor Prestação</th>
+                                    <th className="py-2 px-2 text-right">Amortização</th>
+                                    <th className="py-2 px-2 text-right">Juros</th>
+                                    <th className="py-2 px-2 text-right">Saldo Devedor</th>
+                                    <th className="py-2 px-2 text-right text-indigo-600 dark:text-indigo-400">Total Pago</th>
+                                    <th className="py-2 px-2 text-center">Status</th>
+                                    <th className="py-2 px-2 text-center">Ação</th>
                                   </tr>
                                 </thead>
-                                <tbody>
-                                  {item.schedule.map(row => (
-                                    <tr 
-                                      key={row.number}
-                                      className={`border-b border-zinc-50 dark:border-zinc-850/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/30 ${
-                                        row.isPaid ? 'text-zinc-400' : ''
-                                      }`}
-                                    >
-                                      <td className="py-2 px-2 font-black">{row.number}</td>
-                                      <td className="py-2 px-2 font-medium">{new Date(row.dueDate + 'T00:00:00').toLocaleDateString('pt-BR')}</td>
-                                      <td className="py-2 px-2 text-right font-bold text-zinc-700 dark:text-zinc-300">R$ {row.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                      <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-500 font-medium">R$ {row.interestValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                      <td className="py-2 px-2 text-right text-emerald-600 dark:text-emerald-500 font-medium">R$ {row.amortizationValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                      <td className="py-2 px-2 text-right font-bold">R$ {row.endingBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                                      <td className="py-2 px-2 text-center">
-                                        {row.isPaid ? (
-                                          <span className="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-850 dark:bg-emerald-950/40 dark:text-emerald-400 font-bold rounded">PAGO</span>
-                                        ) : row.dueDate < todayStr ? (
-                                          <span className="text-[8px] px-1.5 py-0.5 bg-rose-100 text-rose-850 dark:bg-rose-950/40 dark:text-rose-400 font-bold rounded">ATRASADO</span>
-                                        ) : (
-                                          <span className="text-[8px] px-1.5 py-0.5 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-bold rounded">ABERTO</span>
-                                        )}
-                                      </td>
-                                      <td className="py-1 px-1 text-center">
-                                        <button
-                                          onClick={() => handleToggleInstallmentPaid(item, row.number)}
-                                          className={`p-1 px-2.5 text-[9px] font-black rounded-lg cursor-pointer transition-colors ${
-                                            row.isPaid
-                                              ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 hover:bg-rose-100 hover:text-rose-600'
-                                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                                          }`}
-                                        >
-                                          {row.isPaid ? 'Desfazer' : 'Pagar'}
-                                        </button>
+                                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-850">
+                                  {filteredSchedule.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={9} className="py-6 text-center text-zinc-400 font-medium">
+                                        Nenhuma parcela encontrada com os filtros selecionados.
                                       </td>
                                     </tr>
-                                  ))}
+                                  ) : (
+                                    filteredSchedule.map(row => (
+                                      <tr 
+                                        key={row.number}
+                                        className={`border-b border-zinc-50 dark:border-zinc-850/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/30 ${
+                                          row.isPaid ? 'bg-emerald-50/20 dark:bg-emerald-950/10 text-zinc-400' : ''
+                                        }`}
+                                      >
+                                        <td className="py-2 px-2 text-center font-black">{row.number}</td>
+                                        <td className="py-2 px-2 font-medium">{safeFormatDate(row.dueDate)}</td>
+                                        <td className="py-2 px-2 text-right font-bold text-zinc-700 dark:text-zinc-300">
+                                          R$ {row.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-2 px-2 text-right text-emerald-600 dark:text-emerald-500 font-medium">
+                                          R$ {row.amortizationValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-500 font-medium">
+                                          R$ {row.interestValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-2 px-2 text-right font-bold">
+                                          R$ {row.endingBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-2 px-2 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                                          R$ {row.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </td>
+                                        <td className="py-2 px-2 text-center">
+                                          {row.isPaid ? (
+                                            <span className="text-[8px] px-1.5 py-0.5 bg-emerald-100 text-emerald-850 dark:bg-emerald-950/40 dark:text-emerald-400 font-black rounded">PAGO</span>
+                                          ) : (row.dueDate && row.dueDate < todayStr) ? (
+                                            <span className="text-[8px] px-1.5 py-0.5 bg-rose-100 text-rose-850 dark:bg-rose-950/40 dark:text-rose-400 font-black rounded">ATRASADO</span>
+                                          ) : (
+                                            <span className="text-[8px] px-1.5 py-0.5 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-bold rounded">ABERTO</span>
+                                          )}
+                                        </td>
+                                        <td className="py-1 px-1 text-center">
+                                          <button
+                                            onClick={() => handleToggleInstallmentPaid(item, row.number)}
+                                            className={`p-1 px-2.5 text-[9px] font-black rounded-lg cursor-pointer transition-colors ${
+                                              row.isPaid
+                                                ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 hover:bg-rose-100 hover:text-rose-600'
+                                                : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs'
+                                            }`}
+                                          >
+                                            {row.isPaid ? 'Desfazer' : 'Pagar'}
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
                                 </tbody>
+                                <tfoot className="sticky bottom-0 bg-zinc-100 dark:bg-zinc-850 border-t-2 border-zinc-200 dark:border-zinc-700 font-black text-[10px]">
+                                  <tr>
+                                    <td colSpan={2} className="py-2 px-2 uppercase text-zinc-500">Totais do Financiamento:</td>
+                                    <td className="py-2 px-2 text-right text-zinc-800 dark:text-zinc-200">
+                                      R$ {sumInstallments.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-emerald-600 dark:text-emerald-400">
+                                      R$ {sumAmortization.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-500">
+                                      R$ {sumInterest.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-zinc-400">—</td>
+                                    <td className="py-2 px-2 text-right text-indigo-600 dark:text-indigo-400">
+                                      R$ {sumInstallments.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                                    </td>
+                                    <td colSpan={2} className="py-2 px-2 text-center text-zinc-400 font-normal">
+                                      {item.paidInstallmentsCount}/{item.totalInstallments} pagas
+                                    </td>
+                                  </tr>
+                                </tfoot>
                               </table>
                             </div>
                           </div>
@@ -983,9 +1222,9 @@ export default function Consignados() {
             </div>
           </div>
 
-          {/* LADO DIREITO: FORMULÁRIO DE CADASTRO */}
-          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-5 rounded-2xl shadow-xs h-fit">
-            <div className="flex items-center justify-between mb-4 border-b border-zinc-100 dark:border-zinc-850 pb-3">
+          {/* LADO DIREITO: FORMULÁRIO DE CADASTRO E PRÉ-VISUALIZAÇÃO */}
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-5 rounded-2xl shadow-xs h-fit space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-850 pb-3">
               <h3 className="text-xs font-black text-zinc-500 uppercase tracking-wider flex items-center gap-1">
                 <Landmark className="w-4 h-4 text-indigo-600" />
                 {editingId ? 'Editar Contrato' : 'Novo Contrato Consignado'}
@@ -1000,7 +1239,7 @@ export default function Consignados() {
               )}
             </div>
 
-            <form onSubmit={handleSave} className="space-y-4 text-xs font-semibold">
+            <form onSubmit={handleSave} className="space-y-3.5 text-xs font-semibold">
               <div>
                 <label className="block text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider mb-1">Instituição Credora</label>
                 <select
@@ -1088,7 +1327,7 @@ export default function Consignados() {
                     value={formInterest}
                     onChange={(e) => setFormInterest(e.target.value === '' ? '' : Number(e.target.value))}
                     id="input-con-interest"
-                    className="w-full p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-850 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                    className="w-full p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-850 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-bold"
                   />
                 </div>
 
@@ -1107,7 +1346,7 @@ export default function Consignados() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider mb-1">Amortização</label>
+                  <label className="block text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider mb-1">Sistema Amortização</label>
                   <select
                     value={formAmortizationSystem}
                     onChange={(e) => setFormAmortizationSystem(e.target.value as any)}
@@ -1216,6 +1455,54 @@ export default function Consignados() {
                 </div>
               </div>
 
+              {/* Botão de Pré-visualização da Tabela */}
+              {formPreviewSchedule.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowFormPreview(!showFormPreview)}
+                  className="w-full text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 p-2 rounded-lg border border-indigo-100 dark:border-indigo-900/40 flex items-center justify-center gap-1.5 cursor-pointer hover:bg-indigo-100 transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  {showFormPreview ? 'Ocultar Prévia da Tabela' : `Ver Tabela Prévia (${formPreviewSchedule.length} parcelas)`}
+                </button>
+              )}
+
+              {/* Prévia da Tabela no Formulário */}
+              {showFormPreview && formPreviewSchedule.length > 0 && (
+                <div className="bg-zinc-50 dark:bg-zinc-900 p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 space-y-2 text-[10px]">
+                  <div className="flex justify-between items-center font-black text-indigo-700 dark:text-indigo-400">
+                    <span>Simulação do Cronograma ({formAmortizationSystem})</span>
+                    <span className="text-[9px] text-zinc-400 font-normal">Total: R$ {formPreviewSchedule.reduce((a, b) => a + b.installmentValue, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-zinc-200 dark:border-zinc-800 rounded-lg bg-white dark:bg-zinc-950">
+                    <table className="w-full text-left border-collapse text-[10px]">
+                      <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800 font-bold text-zinc-500">
+                        <tr>
+                          <th className="p-1">Nº</th>
+                          <th className="p-1">Vencimento</th>
+                          <th className="p-1 text-right">Prestação</th>
+                          <th className="p-1 text-right">Amort.</th>
+                          <th className="p-1 text-right">Juros</th>
+                          <th className="p-1 text-right">Saldo</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900 font-mono text-[9px]">
+                        {formPreviewSchedule.map(row => (
+                          <tr key={row.number} className="hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                            <td className="p-1 font-black">{row.number}</td>
+                            <td className="p-1 font-sans">{safeFormatDate(row.dueDate)}</td>
+                            <td className="p-1 text-right font-bold">R$ {row.installmentValue.toFixed(2)}</td>
+                            <td className="p-1 text-right text-emerald-600">R$ {row.amortizationValue.toFixed(2)}</td>
+                            <td className="p-1 text-right text-amber-600">R$ {row.interestValue.toFixed(2)}</td>
+                            <td className="p-1 text-right">R$ {row.endingBalance.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 id="btn-con-save"
@@ -1258,7 +1545,7 @@ export default function Consignados() {
                 value={simLoanId}
                 onChange={(e) => setSimLoanId(e.target.value)}
                 id="select-sim-loan"
-                className="w-full p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-850 dark:text-zinc-100 focus:outline-hidden"
+                className="w-full p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-850 dark:text-zinc-100 focus:outline-hidden font-bold"
               >
                 <option value="">-- Selecione o Empréstimo --</option>
                 {consignadosCalculated
@@ -1355,18 +1642,18 @@ export default function Consignados() {
                       <span>Excelente Oportunidade de Economia!</span>
                     </div>
                     <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold leading-relaxed">
-                      Ao efetuar a liquidação antecipada do contrato na data de <strong className="font-black">{new Date(simDate + 'T00:00:00').toLocaleDateString('pt-BR')}</strong>, você economizará o valor de <strong className="font-black text-emerald-800 dark:text-emerald-300">R$ {simulationResult.economyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> correspondente aos juros de parcelas futuras que deixarão de existir.
+                      Ao efetuar a liquidação antecipada do contrato na data de <strong className="font-black">{safeFormatDate(simDate)}</strong>, você economizará o valor de <strong className="font-black text-emerald-800 dark:text-emerald-300">R$ {simulationResult.economyAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong> correspondente aos juros de parcelas futuras que deixarão de existir.
                     </p>
                   </div>
 
                   <div className="mt-6 border-t border-emerald-200 dark:border-emerald-900/40 pt-4 space-y-2">
                     <div className="flex justify-between text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
                       <span>Custo Contratado original:</span>
-                      <span>R$ {simulationResult.initialContractValue.toLocaleString('pt-BR')}</span>
+                      <span>R$ {simulationResult.initialContractValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
                     <div className="flex justify-between text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300">
                       <span>Custo final com quitação hoje:</span>
-                      <span>R$ {(simulationResult.paidValue + simulationResult.amortizationPending).toLocaleString('pt-BR')}</span>
+                      <span>R$ {(simulationResult.paidValue + simulationResult.amortizationPending).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                     </div>
                   </div>
                 </div>
@@ -1433,7 +1720,7 @@ export default function Consignados() {
                   {settlementHistoryList.map((settle, idx) => (
                     <tr key={idx} className="hover:bg-zinc-50 dark:hover:bg-zinc-900/20">
                       <td className="py-3 px-3 font-bold text-zinc-700 dark:text-zinc-200">
-                        {new Date(settle.settlementDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        {safeFormatDate(settle.settlementDate)}
                       </td>
                       <td className="py-3 px-3">
                         <div className="font-black text-zinc-800 dark:text-zinc-100">{settle.bank}</div>
@@ -1490,19 +1777,19 @@ export default function Consignados() {
                   <div className="flex justify-between">
                     <span className="text-zinc-400">Total originalmente contratado:</span>
                     <span className="font-bold text-zinc-700 dark:text-zinc-300">
-                      R$ {consignadosCalculated.reduce((sum, c) => sum + c.initialContractValue, 0).toLocaleString('pt-BR')}
+                      R$ {consignadosCalculated.reduce((sum, c) => sum + c.initialContractValue, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-400">Total pago de juros:</span>
                     <span className="font-bold text-amber-600">
-                      R$ {consolidatedMetrics.totalPaid}
+                      R$ {consignadosCalculated.reduce((sum, c) => sum + c.totalPaidInterest, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between border-t border-zinc-200 dark:border-zinc-800 pt-2 font-bold">
                     <span className="text-zinc-500">Economia real obtida:</span>
                     <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                      R$ {consolidatedMetrics.totalInterestSaved.toLocaleString('pt-BR')}
+                      R$ {consolidatedMetrics.totalInterestSaved.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1515,12 +1802,12 @@ export default function Consignados() {
                   <div className="flex justify-between text-xs font-bold mb-1">
                     <span className="text-zinc-400">Total amortizado:</span>
                     <span className="text-zinc-800 dark:text-zinc-200">
-                      R$ {consignadosCalculated.reduce((sum, c) => sum + c.totalPaidAmortization, 0).toLocaleString('pt-BR')}
+                      R$ {consignadosCalculated.reduce((sum, c) => sum + c.totalPaidAmortization, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div className="flex justify-between text-[10px] text-zinc-400">
                     <span>Empréstimo original (Principal):</span>
-                    <span className="font-bold">R$ {consolidatedMetrics.totalBorrowed.toLocaleString('pt-BR')}</span>
+                    <span className="font-bold">R$ {consolidatedMetrics.totalBorrowed.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="w-full h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden mt-3">
                     <div 
@@ -1551,116 +1838,125 @@ export default function Consignados() {
               </div>
 
             </div>
+          </div>
+        </div>
+      )}
 
-            {/* GRÁFICOS VISUAIS CUSTOMIZADOS USANDO ELEMENTOS SVG RESPONSIVOS */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-              
-              {/* GRÁFICO 1: COMPARATIVO VALOR CONTRATADO VS VALOR EFETIVAMENTE PAGO */}
-              <div className="border border-zinc-150 dark:border-zinc-850 p-5 rounded-xl bg-white dark:bg-zinc-950/50 space-y-3">
-                <h4 className="text-xs font-bold text-zinc-600 dark:text-zinc-300">Comparativo: Custo Contratado original vs Efetivo Pago + Líquido</h4>
-                <p className="text-[10px] text-zinc-400 font-medium">Demonstração visual do valor que seria pago na integralidade original do contrato vs. o valor pago em virtude de quitações e pagamentos proporcionais.</p>
-                
-                {consignadosCalculated.length === 0 ? (
-                  <div className="text-center py-8 text-zinc-400 text-xs">Sem dados para exibição do gráfico</div>
-                ) : (
-                  <div className="w-full flex justify-center py-2">
-                    <svg viewBox="0 0 450 180" className="w-full max-w-md">
-                      {/* Grid Lines */}
-                      <line x1="40" y1="20" x2="430" y2="20" stroke="#f1f5f9" className="dark:stroke-zinc-800/40" strokeDasharray="3,3" />
-                      <line x1="40" y1="70" x2="430" y2="70" stroke="#f1f5f9" className="dark:stroke-zinc-800/40" strokeDasharray="3,3" />
-                      <line x1="40" y1="120" x2="430" y2="120" stroke="#f1f5f9" className="dark:stroke-zinc-800/40" strokeDasharray="3,3" />
-                      <line x1="40" y1="140" x2="430" y2="140" stroke="#e2e8f0" className="dark:stroke-zinc-800" />
-
-                      {/* Bar 1: Contratado original (R$ 100% size) */}
-                      <rect x="100" y="30" width="60" height="110" rx="4" fill="#6366f1" className="opacity-80" />
-                      {/* Label Bar 1 */}
-                      <text x="130" y="155" textAnchor="middle" className="text-[10px] font-bold fill-zinc-400">Original</text>
-                      <text x="130" y="25" textAnchor="middle" className="text-[9px] font-black fill-indigo-600 dark:fill-indigo-400">
-                        R$ {consignadosCalculated.reduce((sum, c) => sum + c.initialContractValue, 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-                      </text>
-
-                      {/* Bar 2: Pago Efetivo + Líquido de Quitação (Menor tamanho caso haja desconto) */}
-                      {(() => {
-                        const original = consignadosCalculated.reduce((sum, c) => sum + c.initialContractValue, 0);
-                        const economy = consolidatedMetrics.totalInterestSaved;
-                        const effective = Math.max(0, original - economy);
-                        const height = original > 0 ? (effective / original) * 110 : 0;
-                        const y = 140 - height;
-
-                        return (
-                          <>
-                            <rect x="290" y={y} width="60" height={height} rx="4" fill="#10b981" className="opacity-80" />
-                            <text x="320" y="155" textAnchor="middle" className="text-[10px] font-bold fill-zinc-400">Pago Efetivo</text>
-                            <text x="320" y={y - 5} textAnchor="middle" className="text-[9px] font-black fill-emerald-600 dark:fill-emerald-400">
-                              R$ {effective.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-                            </text>
-                            {economy > 0 && (
-                              <text x="320" y="80" textAnchor="middle" className="text-[9px] font-black fill-white bg-black p-1 rounded">
-                                Pou Pou R$ {economy.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}!
-                              </text>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </svg>
-                  </div>
-                )}
+      {/* MODAL DE VISUALIZAÇÃO COMPLETA / TELA CHEIA DA TABELA DE AMORTIZAÇÃO */}
+      {scheduleModalLoan && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Header Modal */}
+            <div className="p-5 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center bg-zinc-50/50 dark:bg-zinc-900/50">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Landmark className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  <h3 className="text-base font-black text-zinc-800 dark:text-zinc-100">{scheduleModalLoan.bank}</h3>
+                  <span className="text-xs px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold rounded">
+                    Contrato: {scheduleModalLoan.contractNumber}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-bold rounded">
+                    Sistema: {scheduleModalLoan.amortizationSystem || 'Price'}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 font-medium mt-1">
+                  Demonstrativo Analítico Completo do Cronograma de Amortização ({scheduleModalLoan.totalInstallments} parcelas)
+                </p>
               </div>
 
-              {/* GRÁFICO 2: EVOLUÇÃO E DECAIMENTO DO SALDO DEVEDOR */}
-              <div className="border border-zinc-150 dark:border-zinc-850 p-5 rounded-xl bg-white dark:bg-zinc-950/50 space-y-3">
-                <h4 className="text-xs font-bold text-zinc-600 dark:text-zinc-300">Previsão: Curva de Decaimento de Dívida Consolidada</h4>
-                <p className="text-[10px] text-zinc-400 font-medium">Projeção visual do declínio do saldo devedor consolidado na medida em que as amortizações das parcelas ocorrem ao longo do tempo.</p>
-                
-                {consignadosCalculated.length === 0 ? (
-                  <div className="text-center py-8 text-zinc-400 text-xs">Sem dados para exibição do gráfico</div>
-                ) : (
-                  <div className="w-full flex justify-center py-2">
-                    <svg viewBox="0 0 450 180" className="w-full max-w-md">
-                      {/* Grid Lines */}
-                      <line x1="40" y1="20" x2="430" y2="20" stroke="#f1f5f9" className="dark:stroke-zinc-800/20" strokeDasharray="3,3" />
-                      <line x1="40" y1="60" x2="430" y2="60" stroke="#f1f5f9" className="dark:stroke-zinc-800/20" strokeDasharray="3,3" />
-                      <line x1="40" y1="100" x2="430" y2="100" stroke="#f1f5f9" className="dark:stroke-zinc-800/20" strokeDasharray="3,3" />
-                      <line x1="40" y1="140" x2="430" y2="140" stroke="#e2e8f0" className="dark:stroke-zinc-800" />
-
-                      {/* Area Curve representing debt reduction over 5 mock timeline steps */}
-                      <path
-                        d={`M 60 40 L 140 60 L 220 85 L 300 115 L 380 140 L 380 140 L 60 140 Z`}
-                        fill="#6366f1"
-                        className="opacity-15"
-                      />
-                      <path
-                        d={`M 60 40 L 140 60 L 220 85 L 300 115 L 380 140`}
-                        fill="none"
-                        stroke="#6366f1"
-                        strokeWidth="3"
-                      />
-
-                      {/* Dots on Curve */}
-                      <circle cx="60" cy="40" r="4" fill="#4f46e5" />
-                      <circle cx="140" cy="60" r="4" fill="#4f46e5" />
-                      <circle cx="220" cy="85" r="4" fill="#4f46e5" />
-                      <circle cx="300" cy="115" r="4" fill="#4f46e5" />
-                      <circle cx="380" cy="140" r="4" fill="#4f46e5" />
-
-                      {/* Labels X Axis */}
-                      <text x="60" y="155" textAnchor="middle" className="text-[8px] font-bold fill-zinc-400">Atual</text>
-                      <text x="140" y="155" textAnchor="middle" className="text-[8px] font-bold fill-zinc-400">Step 1</text>
-                      <text x="220" y="155" textAnchor="middle" className="text-[8px] font-bold fill-zinc-400">Step 2</text>
-                      <text x="300" y="155" textAnchor="middle" className="text-[8px] font-bold fill-zinc-400">Step 3</text>
-                      <text x="380" y="155" textAnchor="middle" className="text-[8px] font-bold fill-zinc-400">Fim</text>
-
-                      {/* Balance indicators */}
-                      <text x="65" y="32" className="text-[8px] font-black fill-zinc-500">
-                        R$ {consolidatedMetrics.totalRemainingAmort.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-                      </text>
-                    </svg>
-                  </div>
-                )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleExportScheduleText(scheduleModalLoan)}
+                  className="px-3 py-1.5 text-xs font-bold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Download className="w-4 h-4" /> Exportar TXT
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="px-3 py-1.5 text-xs font-bold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" /> Imprimir
+                </button>
+                <button
+                  onClick={() => setScheduleModalLoan(null)}
+                  className="p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-
             </div>
 
+            {/* Conteúdo Tabela Modal */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-zinc-50 dark:bg-zinc-900 p-3 rounded-xl text-xs">
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold block">Valor Financiado</span>
+                  <span className="font-black text-zinc-800 dark:text-zinc-200">R$ {scheduleModalLoan.borrowedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold block">Taxa de Juros</span>
+                  <span className="font-black text-amber-600 dark:text-amber-400">{scheduleModalLoan.interestRate}% a.m.</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold block">Primeiro Vencimento</span>
+                  <span className="font-bold text-zinc-700 dark:text-zinc-300">{safeFormatDate(scheduleModalLoan.firstPaymentDate)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-extrabold block">Prestação Base</span>
+                  <span className="font-black text-indigo-600 dark:text-indigo-400">R$ {scheduleModalLoan.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800 font-black uppercase text-[10px] tracking-wider text-zinc-500">
+                    <tr>
+                      <th className="py-2.5 px-3 text-center">Nº</th>
+                      <th className="py-2.5 px-3">Vencimento</th>
+                      <th className="py-2.5 px-3 text-right">Valor Prestação</th>
+                      <th className="py-2.5 px-3 text-right">Amortização</th>
+                      <th className="py-2.5 px-3 text-right">Juros</th>
+                      <th className="py-2.5 px-3 text-right">Saldo Devedor</th>
+                      <th className="py-2.5 px-3 text-right text-indigo-600 dark:text-indigo-400">Total Pago</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                      <th className="py-2.5 px-3 text-center">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100 dark:divide-zinc-850">
+                    {scheduleModalLoan.schedule.map(row => (
+                      <tr key={row.number} className={`hover:bg-zinc-50 dark:hover:bg-zinc-900/40 ${row.isPaid ? 'bg-emerald-50/20 dark:bg-emerald-950/10 text-zinc-400' : ''}`}>
+                        <td className="py-2 px-3 text-center font-black">{row.number}</td>
+                        <td className="py-2 px-3 font-semibold">{safeFormatDate(row.dueDate)}</td>
+                        <td className="py-2 px-3 text-right font-bold text-zinc-700 dark:text-zinc-300">R$ {row.installmentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 px-3 text-right text-emerald-600 font-medium">R$ {row.amortizationValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 px-3 text-right text-amber-600 font-medium">R$ {row.interestValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 px-3 text-right font-bold">R$ {row.endingBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 px-3 text-right font-bold text-indigo-600 dark:text-indigo-400">R$ {row.totalPaid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-2 px-3 text-center">
+                          {row.isPaid ? (
+                            <span className="text-[9px] px-2 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 font-black rounded">PAGO</span>
+                          ) : (row.dueDate && row.dueDate < todayStr) ? (
+                            <span className="text-[9px] px-2 py-0.5 bg-rose-100 text-rose-800 dark:bg-rose-950/40 dark:text-rose-400 font-black rounded">ATRASADO</span>
+                          ) : (
+                            <span className="text-[9px] px-2 py-0.5 bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-bold rounded">ABERTO</span>
+                          )}
+                        </td>
+                        <td className="py-1 px-2 text-center">
+                          <button
+                            onClick={() => handleToggleInstallmentPaid(scheduleModalLoan, row.number)}
+                            className={`p-1 px-2.5 text-[9px] font-black rounded-lg cursor-pointer ${
+                              row.isPaid ? 'bg-zinc-100 text-zinc-400 hover:bg-rose-100 hover:text-rose-600' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                            }`}
+                          >
+                            {row.isPaid ? 'Desfazer' : 'Pagar'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}
