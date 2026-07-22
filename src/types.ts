@@ -169,6 +169,7 @@ export interface FinancialData {
   patrimonyItems: PatrimonyItem[];
   fixedCategories?: ExpenseCategory[];
   variableCategories?: ExpenseCategory[];
+  updatedAt?: string;
 }
 
 export interface User {

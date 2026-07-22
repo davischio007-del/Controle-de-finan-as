@@ -316,7 +316,7 @@ export const getInitialData = (): FinancialData => {
       }
     ],
     fixedCategories: [
-      { id: 'fcat-1', name: 'Moradia', isActive: true, subcategories: ['Água', 'Energia', 'Internet', 'Condomínio', 'IPTU'] },
+      { id: 'fcat-1', name: 'Moradia', isActive: true, subcategories: ['Aluguel', 'Água', 'Energia', 'Internet', 'Condomínio', 'IPTU'] },
       { id: 'fcat-2', name: 'Assinaturas', isActive: true, subcategories: ['Netflix', 'Spotify', 'Amazon Prime', 'Disney+'] },
       { id: 'fcat-3', name: 'Educação', isActive: true, subcategories: ['Mensalidade', 'Livros', 'Cursos'] },
       { id: 'fcat-4', name: 'Saúde', isActive: true, subcategories: ['Academia', 'Plano de Saúde', 'Medicamentos'] },

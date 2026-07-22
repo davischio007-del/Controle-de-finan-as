@@ -26,6 +26,128 @@ import { hashPassword, generate2FASecret, getTOTPCode } from '../utils/security'
 import { db } from '../firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
+let isQuotaExceeded = false;
+
+async function safeSetDoc(docRef: any, data: any, options?: any) {
+  if (isQuotaExceeded) return;
+  try {
+    if (options) {
+      await setDoc(docRef, data, options);
+    } else {
+      await setDoc(docRef, data);
+    }
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || String(err).includes('Quota limit exceeded') || String(err).includes('resource-exhausted')) {
+      if (!isQuotaExceeded) {
+        isQuotaExceeded = true;
+        console.warn('Firestore write quota exceeded. Seamlessly persisting data to LocalStorage.');
+      }
+    } else {
+      console.warn('Firestore setDoc warning:', err?.message || err);
+    }
+  }
+}
+
+async function safeDeleteDoc(docRef: any) {
+  if (isQuotaExceeded) return;
+  try {
+    await deleteDoc(docRef);
+  } catch (err: any) {
+    if (err?.code === 'resource-exhausted' || String(err).includes('Quota limit exceeded') || String(err).includes('resource-exhausted')) {
+      if (!isQuotaExceeded) {
+        isQuotaExceeded = true;
+        console.warn('Firestore write quota exceeded. Seamlessly persisting data to LocalStorage.');
+      }
+    } else {
+      console.warn('Firestore deleteDoc warning:', err?.message || err);
+    }
+  }
+}
+
+export function ensureMoradiaAluguel(d: FinancialData): FinancialData {
+  if (!d) return d;
+
+  let fixedCats = d.fixedCategories ? [...d.fixedCategories] : [];
+  const moradiaFixedIndex = fixedCats.findIndex(c => c && c.name && c.name.toLowerCase() === 'moradia');
+
+  if (moradiaFixedIndex !== -1) {
+    const moradia = fixedCats[moradiaFixedIndex];
+    const subcats = Array.isArray(moradia.subcategories) ? moradia.subcategories : [];
+    if (!subcats.some(s => typeof s === 'string' && s.toLowerCase() === 'aluguel')) {
+      fixedCats[moradiaFixedIndex] = {
+        ...moradia,
+        subcategories: ['Aluguel', ...subcats]
+      };
+    }
+  } else {
+    fixedCats.unshift({
+      id: 'fcat-moradia',
+      name: 'Moradia',
+      isActive: true,
+      subcategories: ['Aluguel', 'Água', 'Energia', 'Internet', 'Condomínio', 'IPTU']
+    });
+  }
+
+  let varCats = d.variableCategories ? [...d.variableCategories] : [];
+  const moradiaVarIndex = varCats.findIndex(c => c && c.name && c.name.toLowerCase() === 'moradia');
+  if (moradiaVarIndex !== -1) {
+    const moradia = varCats[moradiaVarIndex];
+    const subcats = Array.isArray(moradia.subcategories) ? moradia.subcategories : [];
+    if (!subcats.some(s => typeof s === 'string' && s.toLowerCase() === 'aluguel')) {
+      varCats[moradiaVarIndex] = {
+        ...moradia,
+        subcategories: ['Aluguel', ...subcats]
+      };
+    }
+  }
+
+  return {
+    ...d,
+    fixedCategories: fixedCats,
+    variableCategories: varCats
+  };
+}
+
+export function mergeFinancialData(localData: FinancialData, remoteData: FinancialData): FinancialData {
+  if (!remoteData) return ensureMoradiaAluguel(localData);
+  if (!localData) return ensureMoradiaAluguel(remoteData);
+
+  const localTime = localData.updatedAt ? new Date(localData.updatedAt).getTime() : 0;
+  const remoteTime = remoteData.updatedAt ? new Date(remoteData.updatedAt).getTime() : 0;
+
+  const mergeList = <T extends { id: string }>(primaryList: T[] = [], secondaryList: T[] = []): T[] => {
+    const map = new Map<string, T>();
+    (secondaryList || []).forEach(item => {
+      if (item && item.id) map.set(item.id, item);
+    });
+    (primaryList || []).forEach(item => {
+      if (item && item.id) map.set(item.id, item);
+    });
+    return Array.from(map.values());
+  };
+
+  const primary = localTime >= remoteTime ? localData : remoteData;
+  const secondary = localTime >= remoteTime ? remoteData : localData;
+
+  const merged: FinancialData = {
+    salaries: mergeList(primary.salaries, secondary.salaries),
+    fixedExpenses: mergeList(primary.fixedExpenses, secondary.fixedExpenses),
+    variableExpenses: mergeList(primary.variableExpenses, secondary.variableExpenses),
+    consignados: mergeList(primary.consignados, secondary.consignados),
+    creditCards: mergeList(primary.creditCards, secondary.creditCards),
+    cardPurchases: mergeList(primary.cardPurchases, secondary.cardPurchases),
+    savingsGoals: mergeList(primary.savingsGoals, secondary.savingsGoals),
+    emergencyFund: primary.emergencyFund || secondary.emergencyFund || { targetValue: 0, currentValue: 0 },
+    investments: mergeList(primary.investments, secondary.investments),
+    patrimonyItems: mergeList(primary.patrimonyItems, secondary.patrimonyItems),
+    fixedCategories: mergeList(primary.fixedCategories, secondary.fixedCategories),
+    variableCategories: mergeList(primary.variableCategories, secondary.variableCategories),
+    updatedAt: new Date(Math.max(localTime, remoteTime, Date.now())).toISOString()
+  };
+
+  return ensureMoradiaAluguel(merged);
+}
+
 interface FinancialContextType {
   data: FinancialData;
   selectedYear: number;
@@ -205,9 +327,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ip: savedIp
     };
     setAuditLogs(prev => [newLog, ...prev].slice(0, 5000));
-    setDoc(doc(db, 'auditLogs', newLog.id), newLog).catch(err => {
-      console.warn('Audit log write warning:', err?.message || err);
-    });
+    safeSetDoc(doc(db, 'auditLogs', newLog.id), newLog);
   };
 
   const clearAuditLogs = () => {
@@ -297,9 +417,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
             createdAt: new Date().toISOString(),
             failedLoginAttempts: 0
           };
-          setDoc(doc(db, 'users', 'admin'), initialAdmin).catch(err => {
-            console.warn('Erro ao criar admin inicial no Firestore:', err?.message || err);
-          });
+          safeSetDoc(doc(db, 'users', 'admin'), initialAdmin);
         }
       }, (err) => {
         console.warn('Erro na sincronização de usuários Firestore:', err);
@@ -330,7 +448,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     if (savedUser) {
       try {
         const u = JSON.parse(savedUser) as User;
-        const savedData = localStorage.getItem(`financ_data_v1_${u.username}`);
+        const savedData = localStorage.getItem(`financ_data_v1_${u.username.toLowerCase()}`);
         if (savedData) {
           parsedData = JSON.parse(savedData);
         }
@@ -355,19 +473,18 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       parsedData = getInitialData();
     }
 
-    // Hydrate default categories if missing
-    if (!parsedData.fixedCategories || parsedData.fixedCategories.length === 0) {
-      parsedData.fixedCategories = getInitialData().fixedCategories;
-    }
-    if (!parsedData.variableCategories || parsedData.variableCategories.length === 0) {
-      parsedData.variableCategories = getInitialData().variableCategories;
-    }
-
-    return parsedData;
+    return ensureMoradiaAluguel(parsedData);
   });
 
   const isRemoteUpdateRef = useRef(false);
   const prevDataJsonRef = useRef('');
+  const dataRef = useRef(data);
+  const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
+  const activeUserRef = useRef(activeUsername);
+
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<number>(7); // Julho
@@ -390,32 +507,58 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUser]);
 
+  // Efeito ao trocar de usuário: carregar dados salvos do novo usuário do LocalStorage
+  useEffect(() => {
+    if (activeUserRef.current !== activeUsername) {
+      activeUserRef.current = activeUsername;
+      const savedDataKey = currentUser ? `financ_data_v1_${activeUsername}` : 'financ_data_v1';
+      const saved = localStorage.getItem(savedDataKey);
+      let userLocalData: FinancialData;
+      if (saved) {
+        try {
+          userLocalData = JSON.parse(saved);
+        } catch (e) {
+          userLocalData = getInitialData();
+        }
+      } else {
+        userLocalData = getInitialData();
+      }
+      userLocalData = ensureMoradiaAluguel(userLocalData);
+      setData(userLocalData);
+      prevDataJsonRef.current = JSON.stringify(userLocalData);
+    }
+  }, [activeUsername, currentUser]);
+
   // Listener em tempo real do Firestore para Dados Financeiros do Usuário
   useEffect(() => {
-    const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
+    const currentActiveUser = currentUser ? currentUser.username.toLowerCase() : 'admin';
     try {
-      const dataDocRef = doc(db, 'financialData', activeUsername);
+      const dataDocRef = doc(db, 'financialData', currentActiveUser);
       const unsubscribe = onSnapshot(dataDocRef, (docSnap) => {
         if (docSnap.exists()) {
           const remoteData = docSnap.data() as FinancialData;
-          if (!remoteData.fixedCategories || remoteData.fixedCategories.length === 0) {
-            remoteData.fixedCategories = getInitialData().fixedCategories;
-          }
-          if (!remoteData.variableCategories || remoteData.variableCategories.length === 0) {
-            remoteData.variableCategories = getInitialData().variableCategories;
-          }
+          const localData = dataRef.current;
 
-          const remoteJson = JSON.stringify(remoteData);
-          if (prevDataJsonRef.current !== remoteJson) {
-            prevDataJsonRef.current = remoteJson;
+          // Mesclar dados locais e remotos
+          const mergedData = mergeFinancialData(localData, remoteData);
+          const mergedJson = JSON.stringify(mergedData);
+
+          if (JSON.stringify(localData) !== mergedJson) {
+            prevDataJsonRef.current = mergedJson;
             isRemoteUpdateRef.current = true;
-            setData(remoteData);
+            setData(mergedData);
+
+            const savedDataKey = currentUser ? `financ_data_v1_${currentActiveUser}` : 'financ_data_v1';
+            localStorage.setItem(savedDataKey, mergedJson);
           }
         } else {
-          const initial = getInitialData();
-          setDoc(dataDocRef, { ...initial, username: activeUsername }).catch(err => {
-            console.warn('Erro ao criar doc de dados no Firestore:', err?.message || err);
-          });
+          const localData = ensureMoradiaAluguel(dataRef.current);
+          const dataToSet = {
+            ...localData,
+            username: currentActiveUser,
+            updatedAt: localData.updatedAt || new Date().toISOString()
+          };
+          safeSetDoc(dataDocRef, dataToSet);
         }
       }, (err) => {
         console.warn('Erro snapshot financialData Firestore:', err?.message || err);
@@ -429,14 +572,15 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
   // Sincronizar Dados no LocalStorage e no Cloud Firestore
   useEffect(() => {
-    const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
-    if (currentUser) {
-      localStorage.setItem(`financ_data_v1_${currentUser.username}`, JSON.stringify(data));
-    } else {
-      localStorage.setItem('financ_data_v1', JSON.stringify(data));
-    }
+    const currentActiveUser = currentUser ? currentUser.username.toLowerCase() : 'admin';
+    const savedDataKey = currentUser ? `financ_data_v1_${currentActiveUser}` : 'financ_data_v1';
 
-    const currentJson = JSON.stringify(data);
+    const dataWithMoradia = ensureMoradiaAluguel(data);
+    const currentJson = JSON.stringify(dataWithMoradia);
+
+    // Salvar imediatamente no LocalStorage
+    localStorage.setItem(savedDataKey, currentJson);
+
     if (isRemoteUpdateRef.current) {
       isRemoteUpdateRef.current = false;
       return;
@@ -450,18 +594,16 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
     const timer = setTimeout(() => {
       try {
-        const dataDocRef = doc(db, 'financialData', activeUsername);
-        setDoc(dataDocRef, {
-          ...data,
-          username: activeUsername,
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(err => {
-          console.warn('Aviso salvando no Firestore:', err?.message || err);
-        });
+        const dataDocRef = doc(db, 'financialData', currentActiveUser);
+        safeSetDoc(dataDocRef, {
+          ...dataWithMoradia,
+          username: currentActiveUser,
+          updatedAt: dataWithMoradia.updatedAt || new Date().toISOString()
+        }, { merge: true });
       } catch (e) {
         console.warn('Firestore write error:', e);
       }
-    }, 500);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [data, currentUser]);
@@ -540,7 +682,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
       setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
       setCurrentUser(updatedUser);
-      setDoc(doc(db, 'users', cleanUsername), updatedUser).catch(console.error);
+      safeSetDoc(doc(db, 'users', cleanUsername), updatedUser);
 
       // Registrar Auditoria
       const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
@@ -575,7 +717,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       };
 
       setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
-      setDoc(doc(db, 'users', cleanUsername), updatedUser).catch(console.error);
+      safeSetDoc(doc(db, 'users', cleanUsername), updatedUser);
 
       // Registrar falha na auditoria
       const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
@@ -645,7 +787,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     };
     
     setUsers(prev => [...prev, newUser]);
-    setDoc(doc(db, 'users', compareUsername), newUser).catch(console.error);
+    safeSetDoc(doc(db, 'users', compareUsername), newUser);
     addAuditLog('CRIAR_USUARIO', 'Usuários', `Usuário "${cleanUsername}" (${role}) cadastrado no sistema.`);
     return { success: true };
   };
@@ -692,7 +834,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     }
 
     setUsers(prev => prev.map(u => u.username.toLowerCase() === compareUsername ? updatedUser : u));
-    setDoc(doc(db, 'users', compareUsername), updatedUser).catch(console.error);
+    safeSetDoc(doc(db, 'users', compareUsername), updatedUser);
 
     // Se estiver editando o usuário logado atualmente, atualizar também seu estado
     if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
@@ -712,8 +854,8 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       return; // prevent deleting logged-in user
     }
     setUsers(prev => prev.filter(u => u.username.toLowerCase() !== compareUsername));
-    deleteDoc(doc(db, 'users', compareUsername)).catch(console.error);
-    deleteDoc(doc(db, 'financialData', compareUsername)).catch(console.error);
+    safeDeleteDoc(doc(db, 'users', compareUsername));
+    safeDeleteDoc(doc(db, 'financialData', compareUsername));
     localStorage.removeItem(`financ_data_v1_${username}`);
     addAuditLog('EXCLUIR_USUARIO', 'Usuários', `Usuário "${username}" e todo seu banco de dados foram excluídos permanentemente.`);
   };
@@ -726,7 +868,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
           setCurrentUser(updated);
         }
-        setDoc(doc(db, 'users', compareUsername), updated).catch(console.error);
+        safeSetDoc(doc(db, 'users', compareUsername), updated);
         return updated;
       }
       return u;
@@ -825,11 +967,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       const purchases = linkedPurchase 
         ? [...prev.cardPurchases, linkedPurchase] 
         : prev.cardPurchases;
-      return {
+      const res = {
         ...prev,
         fixedExpenses: [...prev.fixedExpenses, newExpense],
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
 
     addAuditLog('ADICIONAR_REGISTRO', 'Contas Fixas', `Conta fixa "${expense.name}" adicionada. Valor: R$ ${expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
@@ -882,11 +1026,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         addAuditLog('ATUALIZAR_REGISTRO', 'Contas Fixas', `Conta fixa "${existing.name}" atualizada.`);
       }
 
-      return {
+      const res = {
         ...prev,
         fixedExpenses: prev.fixedExpenses.map(f => f.id === id ? updatedExpense : f),
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
   };
 
@@ -897,7 +1043,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         const isPaid = (existing.paidMonths || []).includes(yearMonth);
         addAuditLog('ATUALIZAR_REGISTRO', 'Contas Fixas', `Status de pagamento da conta "${existing.name}" marcado como ${isPaid ? 'Não Pago' : 'Pago'} para ${yearMonth}.`);
       }
-      return {
+      const res = {
         ...prev,
         fixedExpenses: prev.fixedExpenses.map(f => {
           if (f.id !== id) return f;
@@ -911,8 +1057,10 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
             paidMonths: newPaidMonths,
             isPaid: newPaidMonths.includes(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)
           };
-        })
+        }),
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
   };
 
@@ -926,11 +1074,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing && existing.cardPurchaseId) {
         purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
       }
-      return {
+      const res = {
         ...prev,
         fixedExpenses: prev.fixedExpenses.filter(f => f.id !== id),
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
   };
 
@@ -966,11 +1116,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       const purchases = linkedPurchase 
         ? [...prev.cardPurchases, linkedPurchase] 
         : prev.cardPurchases;
-      return {
+      const res = {
         ...prev,
         variableExpenses: [...prev.variableExpenses, newExpense],
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
 
     addAuditLog('ADICIONAR_REGISTRO', 'Contas Variáveis', `Despesa variável "${expense.description}" adicionada. Valor: R$ ${expense.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
@@ -1022,11 +1174,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
       addAuditLog('ATUALIZAR_REGISTRO', 'Contas Variáveis', `Despesa variável "${existing.description}" atualizada.`);
 
-      return {
+      const res = {
         ...prev,
         variableExpenses: prev.variableExpenses.map(v => v.id === id ? updatedExpense : v),
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
   };
 
@@ -1040,11 +1194,13 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       if (existing && existing.cardPurchaseId) {
         purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
       }
-      return {
+      const res = {
         ...prev,
         variableExpenses: prev.variableExpenses.filter(v => v.id !== id),
-        cardPurchases: purchases
+        cardPurchases: purchases,
+        updatedAt: new Date().toISOString()
       };
+      return ensureMoradiaAluguel(res);
     });
   };
 
