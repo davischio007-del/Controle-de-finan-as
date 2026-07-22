@@ -1585,52 +1585,52 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       return result;
     };
 
-    const newSalaries = deduplicateArray(
+    const newSalaries = deduplicateArray<Salary>(
       data.salaries || [],
-      s => `${(s.source || s.description || '').trim().toLowerCase()}_${s.value || s.amount}_${s.month}_${s.year}`
+      s => `${(s.description || s.payor || '').trim().toLowerCase()}_${s.value}_${s.month}_${s.year}`
     );
 
-    const newFixed = deduplicateArray(
+    const newFixed = deduplicateArray<FixedExpense>(
       data.fixedExpenses || [],
-      f => `${(f.description || '').trim().toLowerCase()}_${f.amount}_${f.dueDate}_${f.category}`
+      f => `${(f.name || '').trim().toLowerCase()}_${f.value}_${f.dueDay}_${f.category}`
     );
 
-    const newVariable = deduplicateArray(
+    const newVariable = deduplicateArray<VariableExpense>(
       data.variableExpenses || [],
-      v => `${(v.description || '').trim().toLowerCase()}_${v.amount}_${v.date}_${v.category}`
+      v => `${(v.description || '').trim().toLowerCase()}_${v.value}_${v.date}_${v.category}`
     );
 
-    const newConsignados = deduplicateArray(
+    const newConsignados = deduplicateArray<Consignado>(
       data.consignados || [],
-      c => `${(c.bank || '').trim().toLowerCase()}_${(c.description || '').trim().toLowerCase()}_${c.totalAmount}_${c.monthlyPayment}`
+      c => `${(c.bank || '').trim().toLowerCase()}_${c.borrowedAmount}_${c.installmentValue}_${c.totalInstallments}`
     );
 
-    const newCards = deduplicateArray(
+    const newCards = deduplicateArray<CreditCard>(
       data.creditCards || [],
-      c => `${(c.cardName || '').trim().toLowerCase()}_${c.lastFourDigits}`
+      c => `${(c.cardName || '').trim().toLowerCase()}_${c.bank}_${c.limit}`
     );
 
-    const newPurchases = deduplicateArray(
+    const newPurchases = deduplicateArray<CardPurchase>(
       data.cardPurchases || [],
       p => `${(p.description || '').trim().toLowerCase()}_${p.totalValue}_${p.cardId}_${p.purchaseDate}`
     );
 
-    const newGoals = deduplicateArray(
+    const newGoals = deduplicateArray<SavingsGoal>(
       data.savingsGoals || [],
-      g => `${(g.name || '').trim().toLowerCase()}_${g.targetValue}`
+      g => `${g.targetAmount}_${g.targetMonth}`
     );
 
-    const newInvestments = deduplicateArray(
+    const newInvestments = deduplicateArray<Investment>(
       data.investments || [],
       i => `${(i.name || '').trim().toLowerCase()}_${i.value}_${i.type}`
     );
 
-    const newPatrimony = deduplicateArray(
+    const newPatrimony = deduplicateArray<PatrimonyItem>(
       data.patrimonyItems || [],
       m => `${(m.name || '').trim().toLowerCase()}_${m.value}`
     );
 
-    const newAudit = deduplicateArray(
+    const newAudit = deduplicateArray<AuditLog>(
       auditLogs || [],
       l => `${l.timestamp}_${l.operation}_${l.username}_${(l.details || '').trim().toLowerCase()}`
     );
