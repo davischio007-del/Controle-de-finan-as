@@ -2,13 +2,13 @@
   "entities": {
     "users": {
       "title": "users",
-      "description": "Registered system users",
+      "description": "User profile document",
       "type": "object",
       "properties": {
+        "uid": { "type": "string" },
         "username": { "type": "string" },
         "fullName": { "type": "string" },
         "email": { "type": "string" },
-        "password": { "type": "string" },
         "role": { "type": "string" },
         "active": { "type": "boolean" },
         "createdAt": { "type": "string" },
@@ -19,11 +19,11 @@
         "twoFactorEnabled": { "type": "boolean" },
         "twoFactorSecret": { "type": "string" }
       },
-      "required": ["username", "fullName", "role", "active"]
+      "required": ["uid", "username", "fullName", "role", "active"]
     },
     "financialData": {
       "title": "financialData",
-      "description": "Financial records per user",
+      "description": "Financial dataset stored under users/{userId}/financialData/main",
       "type": "object",
       "properties": {
         "username": { "type": "string" },
@@ -57,6 +57,20 @@
         "ip": { "type": "string" }
       },
       "required": ["id", "username", "timestamp", "operation", "module"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profile document identified by Firebase Auth UID"
+    },
+    "/users/{userId}/financialData/main": {
+      "schema": "financialData",
+      "description": "Main financial data document for a specific user"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "auditLogs",
+      "description": "Audit logs collection"
     }
   }
 }

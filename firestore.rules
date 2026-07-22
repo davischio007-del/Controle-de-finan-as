@@ -2,8 +2,33 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Regra estrita: Cada usuário só lê e escreve em seu próprio caminho /users/{userId}
+    match /users/{userId} {
+      allow read, write: if isUser(userId);
+
+      // Acesso a todas as subcoleções (financialData, fixedExpenses, etc) do próprio usuário
+      match /{document=**} {
+        allow read, write: if isUser(userId);
+      }
+    }
+
+    // Logs de auditoria do sistema
+    match /auditLogs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Bloqueio padrão para qualquer outra rota
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

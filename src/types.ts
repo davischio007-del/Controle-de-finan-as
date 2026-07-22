@@ -174,6 +174,7 @@ export interface FinancialData {
 }
 
 export interface User {
+  uid?: string;
   fullName: string;
   username: string;
   password?: string;

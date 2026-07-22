@@ -41,7 +41,19 @@ import {
 } from 'lucide-react';
 
 function DashboardShell() {
-  const { data, updateConsignado, selectedYear, setSelectedYear, selectedMonth, setSelectedMonth, currentUser, logoutUser } = useFinancial();
+  const { 
+    data, 
+    updateConsignado, 
+    selectedYear, 
+    setSelectedYear, 
+    selectedMonth, 
+    setSelectedMonth, 
+    currentUser, 
+    logoutUser,
+    isOffline,
+    isSyncPending,
+    syncStatus 
+  } = useFinancial();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'salaries' | 'fixed' | 'variable' | 'consignados' | 'cards' | 'investments' | 'reports' | 'users-admin'>('dashboard');
   const [consignadoBankFilter, setConsignadoBankFilter] = useState<string | undefined>(undefined);
 
@@ -209,10 +221,22 @@ function DashboardShell() {
               <LogOut className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex items-center justify-center gap-1.5 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 py-1 px-2 rounded-md border border-emerald-200 dark:border-emerald-900/40 select-none">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Nuvem Firestore Ativo</span>
-          </div>
+          {isOffline ? (
+            <div className="flex items-center justify-center gap-1.5 text-[9px] text-amber-700 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 py-1 px-2 rounded-md border border-amber-200 dark:border-amber-900/40 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+              <span>Modo Offline (Cache Local)</span>
+            </div>
+          ) : isSyncPending || syncStatus === 'syncing' ? (
+            <div className="flex items-center justify-center gap-1.5 text-[9px] text-indigo-700 dark:text-indigo-400 font-bold bg-indigo-50 dark:bg-indigo-950/40 py-1 px-2 rounded-md border border-indigo-200 dark:border-indigo-900/40 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-spin"></span>
+              <span>Sincronizando Firestore...</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-1.5 text-[9px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 py-1 px-2 rounded-md border border-emerald-200 dark:border-emerald-900/40 select-none">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Firestore em Tempo Real</span>
+            </div>
+          )}
           <div className="text-[9px] text-zinc-400 font-bold text-center">
             Versão 1.3.0 • Multi-User Admin & Cloud DB
           </div>

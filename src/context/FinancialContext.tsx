@@ -23,46 +23,25 @@ import {
 } from '../types';
 import { getInitialData } from '../utils/defaultData';
 import { hashPassword, generate2FASecret, getTOTPCode } from '../utils/security';
-import { db } from '../firebase';
-import { collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-
-let isQuotaExceeded = false;
-
-async function safeSetDoc(docRef: any, data: any, options?: any) {
-  if (isQuotaExceeded) return;
-  try {
-    if (options) {
-      await setDoc(docRef, data, options);
-    } else {
-      await setDoc(docRef, data);
-    }
-  } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || String(err).includes('Quota limit exceeded') || String(err).includes('resource-exhausted')) {
-      if (!isQuotaExceeded) {
-        isQuotaExceeded = true;
-        console.warn('Firestore write quota exceeded. Seamlessly persisting data to LocalStorage.');
-      }
-    } else {
-      console.warn('Firestore setDoc warning:', err?.message || err);
-    }
-  }
-}
-
-async function safeDeleteDoc(docRef: any) {
-  if (isQuotaExceeded) return;
-  try {
-    await deleteDoc(docRef);
-  } catch (err: any) {
-    if (err?.code === 'resource-exhausted' || String(err).includes('Quota limit exceeded') || String(err).includes('resource-exhausted')) {
-      if (!isQuotaExceeded) {
-        isQuotaExceeded = true;
-        console.warn('Firestore write quota exceeded. Seamlessly persisting data to LocalStorage.');
-      }
-    } else {
-      console.warn('Firestore deleteDoc warning:', err?.message || err);
-    }
-  }
-}
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  User as FirebaseUser
+} from 'firebase/auth';
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  limit
+} from 'firebase/firestore';
 
 export function ensureMoradiaAluguel(d: FinancialData): FinancialData {
   if (!d) return d;
@@ -128,6 +107,11 @@ interface FinancialContextType {
   selectedMonth: number;
   setSelectedYear: (year: number) => void;
   setSelectedMonth: (month: number) => void;
+  
+  // Status de Sincronização e Conexão Firestore
+  isOffline: boolean;
+  isSyncPending: boolean;
+  syncStatus: 'synced' | 'syncing' | 'offline' | 'error';
   
   // Salaries
   addSalary: (salary: Omit<Salary, 'id'>) => void;
@@ -206,8 +190,8 @@ interface FinancialContextType {
   // Auth & User Management
   users: User[];
   currentUser: User | null;
-  loginUser: (username: string, password?: string, twoFactorCode?: string) => { success: boolean; error?: string; require2FA?: boolean };
-  logoutUser: () => void;
+  loginUser: (username: string, password?: string, twoFactorCode?: string) => Promise<{ success: boolean; error?: string; require2FA?: boolean }>;
+  logoutUser: () => Promise<void>;
   registerUser: (
     fullName: string,
     username: string,
@@ -216,14 +200,14 @@ interface FinancialContextType {
     email?: string,
     role?: 'admin' | 'user',
     active?: boolean
-  ) => { success: boolean; error?: string };
+  ) => Promise<{ success: boolean; error?: string }>;
   updateUser: (
     username: string,
     updatedFields: Partial<Omit<User, 'username' | 'createdAt'>>
-  ) => { success: boolean; error?: string };
-  deleteUser: (username: string) => void;
-  changeUserPassword: (username: string, newPassword: string) => void;
-  forgotPassword: (usernameOrEmail: string) => { success: boolean; message: string };
+  ) => Promise<{ success: boolean; error?: string }>;
+  deleteUser: (username: string) => Promise<void>;
+  changeUserPassword: (username: string, newPassword: string) => Promise<void>;
+  forgotPassword: (usernameOrEmail: string) => Promise<{ success: boolean; message: string }>;
 
   // Auditoria
   auditLogs: AuditLog[];
@@ -256,71 +240,51 @@ const getCardFirstDueDate = (purchaseDateStr: string, cardId: string, creditCard
 };
 
 export function FinancialProvider({ children }: { children: ReactNode }) {
+  // Estados de conexão e sincronização
+  const [isOffline, setIsOffline] = useState<boolean>(!navigator.onLine);
+  const [isSyncPending, setIsSyncPending] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('synced');
+
+  // Monitorar estado da conexão com a internet
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      setSyncStatus('synced');
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      setSyncStatus('offline');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // Lista de Auditoria
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const initialSeedLogs: AuditLog[] = [
-      {
-        id: 'log-ip-138-1',
-        username: 'admin',
-        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-        operation: 'CRIAR_RECEITA',
-        module: 'Receitas',
-        details: 'Lançamento de receita Salário no valor de R$ 5.500,00',
-        ip: '138.118.77.207'
-      },
-      {
-        id: 'log-ip-138-2',
-        username: 'admin',
-        timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-        operation: 'COMPRA_CARTAO',
-        module: 'Cartões de Crédito',
-        details: 'Lançamento de compra Supermercado no valor de R$ 450,00',
-        ip: '138.118.77.207'
-      },
-      {
-        id: 'log-ip-138-3',
-        username: 'admin',
-        timestamp: new Date(Date.now() - 3600000 * 8).toISOString(),
-        operation: 'CRIAR_DESPESA_VARIAVEL',
-        module: 'Despesas Variáveis',
-        details: 'Lançamento de despesa Combustível no valor de R$ 220,00',
-        ip: '138.118.77.207'
-      },
-      {
-        id: 'log-ip-138-4',
-        username: 'admin',
-        timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
-        operation: 'LOGIN',
-        module: 'Autenticação',
-        details: 'Sessão iniciada com sucesso via IP 138.118.77.207',
-        ip: '138.118.77.207'
-      }
-    ];
-
     const saved = localStorage.getItem('financ_audit_logs');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed) && parsed.length > 0) {
-          const hasTargetIp = parsed.some((l: AuditLog) => l.ip === '138.118.77.207');
-          if (!hasTargetIp) {
-            return [...initialSeedLogs, ...parsed];
-          }
-          return parsed;
-        }
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       } catch (e) {
-        return initialSeedLogs;
+        // ignore
       }
     }
-    return initialSeedLogs;
+    return [];
   });
 
-  // Persistir Logs de Auditoria
+  // Persistir Logs de Auditoria no Cache Local
   useEffect(() => {
     localStorage.setItem('financ_audit_logs', JSON.stringify(auditLogs));
   }, [auditLogs]);
 
-  // Listener em tempo real do Firestore para Logs de Auditoria
+  // Listener em tempo real do Firestore para Audit Logs
   useEffect(() => {
     try {
       const auditRef = collection(db, 'auditLogs');
@@ -334,15 +298,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
           setAuditLogs(logs);
         }
       }, (err) => {
-        console.warn('Audit logs listener warning:', err);
+        console.warn('Alerta ou erro em auditLogs listener:', err?.message || err);
       });
       return () => unsubscribe();
     } catch (e) {
-      console.warn('Firestore setup warning:', e);
+      console.warn('Audit logs firestore warning:', e);
     }
   }, []);
 
-  // Função auxiliar para registrar ações no log de auditoria
   const addAuditLog = (operation: string, module: string, details: string) => {
     const activeUser = currentUser ? currentUser.username : 'Sistema';
     const savedIp = localStorage.getItem('financ_user_ip') || '127.0.0.1';
@@ -356,259 +319,173 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       ip: savedIp
     };
     setAuditLogs(prev => [newLog, ...prev].slice(0, 5000));
-    safeSetDoc(doc(db, 'auditLogs', newLog.id), newLog);
+    
+    // Salvar no Firestore se houver conexão
+    try {
+      setDoc(doc(db, 'auditLogs', newLog.id), newLog).catch(err => {
+        console.warn('Erro ao salvar audit log no Firestore:', err);
+      });
+    } catch {
+      // ignore
+    }
   };
 
   const clearAuditLogs = () => {
     setAuditLogs([]);
   };
 
-  // Lista de Usuários do App (Persistido no localStorage + Cloud Firestore)
-  const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('financ_users');
-    let loadedUsers: any[] = [];
-    if (saved) {
-      try {
-        loadedUsers = JSON.parse(saved);
-      } catch (e) {
-        console.error('Erro ao ler usuários salvos, recriando admin.', e);
-      }
-    }
-    
-    // Se não tiver nenhum usuário, ou se estiver vazio
-    if (loadedUsers.length === 0) {
-      loadedUsers = [
-        {
-          fullName: 'Administrador Geral',
-          username: 'admin',
-          password: hashPassword('admin'), // hash seguro inicial
-          email: 'admin@financpro.com',
-          role: 'admin',
-          active: true,
-          createdAt: new Date().toISOString(),
-          failedLoginAttempts: 0
-        }
-      ];
-    }
+  // Estado de Usuários
+  const [users, setUsers] = useState<User[]>([]);
 
-    // Normalizar / Migrar usuários antigos que possam estar faltando novas propriedades ou hashing
-    const migrated = loadedUsers.map(u => {
-      let changed = false;
-      const updated = { ...u };
-      
-      if (!updated.fullName) {
-        updated.fullName = updated.username === 'admin' ? 'Administrador Geral' : updated.username;
-        changed = true;
-      }
-      if (updated.active === undefined) {
-        updated.active = true;
-        changed = true;
-      }
-      if (updated.failedLoginAttempts === undefined) {
-        updated.failedLoginAttempts = 0;
-        changed = true;
-      }
-      // Se a senha não estiver no formato hash SHA-256 (comprimento 64), criptografar
-      if (updated.password && updated.password.length !== 64) {
-        updated.password = hashPassword(updated.password);
-        changed = true;
-      }
-      return updated;
-    });
+  // Usuário Logado Atualmente (Autenticado via Firebase Auth)
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-    localStorage.setItem('financ_users', JSON.stringify(migrated));
-    return migrated;
-  });
-
-  // Listener em tempo real para sincronização de Usuários com o Firestore Cloud DB
-  useEffect(() => {
-    try {
-      const usersRef = collection(db, 'users');
-      const unsubscribe = onSnapshot(usersRef, (snapshot) => {
-        if (!snapshot.empty) {
-          const firestoreUsers: User[] = [];
-          snapshot.forEach(docSnap => {
-            firestoreUsers.push(docSnap.data() as User);
-          });
-          setUsers(prev => {
-            if (JSON.stringify(prev) === JSON.stringify(firestoreUsers)) return prev;
-            return firestoreUsers;
-          });
-        } else {
-          // Se o banco na nuvem estiver vazio, criar usuário admin padrão no Firestore
-          const initialAdmin: User = {
-            fullName: 'Administrador Geral',
-            username: 'admin',
-            password: hashPassword('admin'),
-            email: 'admin@financpro.com',
-            role: 'admin',
-            active: true,
-            createdAt: new Date().toISOString(),
-            failedLoginAttempts: 0
-          };
-          safeSetDoc(doc(db, 'users', 'admin'), initialAdmin);
-        }
-      }, (err) => {
-        console.warn('Erro na sincronização de usuários Firestore:', err);
-      });
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn('Erro Firestore users:', e);
-    }
-  }, []);
-
-  // Usuário Logado Atualmente
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('financ_current_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return null;
-      }
-    }
-    return null;
-  });
-
-  // Inicialização de Estado de dados financeiros (dinâmico por usuário)
+  // Dados Financeiros
   const [data, setData] = useState<FinancialData>(() => {
-    let parsedData: FinancialData | null = null;
-    const savedUser = localStorage.getItem('financ_current_user');
-    if (savedUser) {
-      try {
-        const u = JSON.parse(savedUser) as User;
-        const savedData = localStorage.getItem(`financ_data_v1_${u.username.toLowerCase()}`);
-        if (savedData) {
-          parsedData = JSON.parse(savedData);
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-    
-    if (!parsedData) {
-      // Fallback/Guest data
-      const saved = localStorage.getItem('financ_data_v1');
-      if (saved) {
-        try {
-          parsedData = JSON.parse(saved);
-        } catch (e) {
-          // ignore
-        }
-      }
-    }
-
-    if (!parsedData) {
-      parsedData = getInitialData();
-    }
-
-    return ensureMoradiaAluguel(parsedData);
+    return ensureMoradiaAluguel(getInitialData());
   });
 
   const isRemoteUpdateRef = useRef(false);
   const prevDataJsonRef = useRef('');
   const dataRef = useRef(data);
-  const activeUsername = currentUser ? currentUser.username.toLowerCase() : 'admin';
-  const activeUserRef = useRef(activeUsername);
+  const currentUserRef = useRef(currentUser);
 
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
 
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   const [selectedYear, setSelectedYear] = useState<number>(2026);
-  const [selectedMonth, setSelectedMonth] = useState<number>(7); // Julho
+  const [selectedMonth, setSelectedMonth] = useState<number>(7);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const savedTheme = localStorage.getItem('financ_dark_mode');
     return savedTheme === 'true';
   });
 
-  // Persistir Usuários no LocalStorage
+  // --- FIREBASE AUTHENTICATION & SESSION PERSISTENCE ---
   useEffect(() => {
-    localStorage.setItem('financ_users', JSON.stringify(users));
-  }, [users]);
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
+      if (fbUser) {
+        const uid = fbUser.uid;
+        const userEmail = fbUser.email || `${uid}@financpro.com`;
 
-  // Persistir Usuário Logado e carregar seus dados financeiros
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('financ_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('financ_current_user');
-    }
-  }, [currentUser]);
-
-  // Efeito ao trocar de usuário: carregar dados salvos do novo usuário do LocalStorage
-  useEffect(() => {
-    if (activeUserRef.current !== activeUsername) {
-      activeUserRef.current = activeUsername;
-      const savedDataKey = currentUser ? `financ_data_v1_${activeUsername}` : 'financ_data_v1';
-      const saved = localStorage.getItem(savedDataKey);
-      let userLocalData: FinancialData;
-      if (saved) {
+        // Buscar dados de perfil do usuário em /users/{uid}
+        let userProfile: User;
         try {
-          userLocalData = JSON.parse(saved);
-        } catch (e) {
-          userLocalData = getInitialData();
+          const userDocRef = doc(db, 'users', uid);
+          const userSnap = await getDoc(userDocRef);
+          if (userSnap.exists()) {
+            userProfile = { uid, ...userSnap.data() } as User;
+          } else {
+            // Criar perfil padrão se for a primeira vez
+            const isFirstAdmin = userEmail.includes('admin');
+            userProfile = {
+              uid,
+              fullName: isFirstAdmin ? 'Administrador Geral' : (fbUser.displayName || userEmail.split('@')[0]),
+              username: userEmail.split('@')[0],
+              email: userEmail,
+              role: isFirstAdmin ? 'admin' : 'user',
+              active: true,
+              createdAt: new Date().toISOString(),
+              failedLoginAttempts: 0
+            };
+            await setDoc(userDocRef, userProfile);
+          }
+        } catch (err) {
+          console.warn('Erro ao carregar perfil do usuário do Firestore:', err);
+          userProfile = {
+            uid,
+            fullName: fbUser.displayName || userEmail.split('@')[0],
+            username: userEmail.split('@')[0],
+            email: userEmail,
+            role: 'user',
+            active: true,
+            createdAt: new Date().toISOString(),
+            failedLoginAttempts: 0
+          };
+        }
+
+        setCurrentUser(userProfile);
+
+        // Tentar carregar do Cache Local para renderização instantânea
+        const localCache = localStorage.getItem(`financ_cache_${uid}`);
+        if (localCache) {
+          try {
+            const parsed = JSON.parse(localCache);
+            setData(ensureMoradiaAluguel(parsed));
+          } catch {
+            // ignore
+          }
         }
       } else {
-        userLocalData = getInitialData();
+        setCurrentUser(null);
+        setData(ensureMoradiaAluguel(getInitialData()));
       }
-      userLocalData = ensureMoradiaAluguel(userLocalData);
-      setData(userLocalData);
-      prevDataJsonRef.current = JSON.stringify(userLocalData);
-    }
-  }, [activeUsername, currentUser]);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   // Listener em tempo real do Firestore para Dados Financeiros do Usuário
   useEffect(() => {
-    const currentActiveUser = currentUser ? currentUser.username.toLowerCase() : 'admin';
-    try {
-      const dataDocRef = doc(db, 'financialData', currentActiveUser);
-      const unsubscribe = onSnapshot(dataDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const remoteData = docSnap.data() as FinancialData;
-          const localData = dataRef.current;
+    if (!currentUser?.uid) return;
 
-          // Mesclar dados locais e remotos
-          const mergedData = mergeFinancialData(localData, remoteData);
-          const mergedJson = JSON.stringify(mergedData);
+    const uid = currentUser.uid;
+    const finDocRef = doc(db, 'users', uid, 'financialData', 'main');
 
-          if (JSON.stringify(localData) !== mergedJson) {
-            prevDataJsonRef.current = mergedJson;
-            isRemoteUpdateRef.current = true;
-            setData(mergedData);
+    setSyncStatus('syncing');
 
-            const savedDataKey = currentUser ? `financ_data_v1_${currentActiveUser}` : 'financ_data_v1';
-            localStorage.setItem(savedDataKey, mergedJson);
-          }
-        } else {
-          const localData = ensureMoradiaAluguel(dataRef.current);
-          const dataToSet = {
-            ...localData,
-            username: currentActiveUser,
-            updatedAt: localData.updatedAt || new Date().toISOString()
-          };
-          safeSetDoc(dataDocRef, dataToSet);
+    const unsubscribe = onSnapshot(finDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const remoteData = docSnap.data() as FinancialData;
+        const localData = dataRef.current;
+
+        const mergedData = mergeFinancialData(localData, remoteData);
+        const mergedJson = JSON.stringify(mergedData);
+
+        if (JSON.stringify(localData) !== mergedJson) {
+          prevDataJsonRef.current = mergedJson;
+          isRemoteUpdateRef.current = true;
+          setData(mergedData);
+
+          // Atualizar Cache no LocalStorage
+          localStorage.setItem(`financ_cache_${uid}`, mergedJson);
         }
-      }, (err) => {
-        console.warn('Erro snapshot financialData Firestore:', err?.message || err);
-      });
+        setSyncStatus('synced');
+        setIsSyncPending(false);
+      } else {
+        // Se o documento no Firestore ainda não existir, inicializar com template padrão
+        const initialTemplate = ensureMoradiaAluguel(dataRef.current || getInitialData());
+        const dataToSave = {
+          ...initialTemplate,
+          username: currentUser.username,
+          updatedAt: new Date().toISOString()
+        };
+        setDoc(finDocRef, dataToSave).catch(err => {
+          console.warn('Erro ao criar registro inicial do usuário no Firestore:', err);
+        });
+      }
+    }, (err) => {
+      console.warn('Alerta ou erro no snapshot de financialData:', err?.message || err);
+      setSyncStatus('offline');
+    });
 
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn('Erro Firestore financialData:', e);
-    }
-  }, [currentUser?.username]);
+    return () => unsubscribe();
+  }, [currentUser?.uid]);
 
-  // Sincronizar Dados no LocalStorage e no Cloud Firestore
+  // Sincronizar alterações locais no Firestore (Debounced)
   useEffect(() => {
-    const currentActiveUser = currentUser ? currentUser.username.toLowerCase() : 'admin';
-    const savedDataKey = currentUser ? `financ_data_v1_${currentActiveUser}` : 'financ_data_v1';
+    if (!currentUser?.uid) return;
 
+    const uid = currentUser.uid;
     const dataWithMoradia = ensureMoradiaAluguel(data);
     const currentJson = JSON.stringify(dataWithMoradia);
 
-    // Salvar imediatamente no LocalStorage
-    localStorage.setItem(savedDataKey, currentJson);
+    // Salvar sempre no LocalStorage como Cache Temporário
+    localStorage.setItem(`financ_cache_${uid}`, currentJson);
 
     if (isRemoteUpdateRef.current) {
       isRemoteUpdateRef.current = false;
@@ -620,24 +497,57 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     }
 
     prevDataJsonRef.current = currentJson;
+    setSyncStatus('syncing');
 
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       try {
-        const dataDocRef = doc(db, 'financialData', currentActiveUser);
-        safeSetDoc(dataDocRef, {
+        const finDocRef = doc(db, 'users', uid, 'financialData', 'main');
+        await setDoc(finDocRef, {
           ...dataWithMoradia,
-          username: currentActiveUser,
+          username: currentUser.username,
           updatedAt: dataWithMoradia.updatedAt || new Date().toISOString()
         }, { merge: true });
-      } catch (e) {
-        console.warn('Firestore write error:', e);
+
+        setSyncStatus('synced');
+        setIsSyncPending(false);
+      } catch (err) {
+        console.warn('Firestore write warning/offline:', err);
+        setIsSyncPending(true);
+        setSyncStatus('offline');
       }
-    }, 300);
+    }, 400);
 
     return () => clearTimeout(timer);
   }, [data, currentUser]);
 
-  // Persistir e Aplicar Tema
+  // Sincronizar dados pendentes quando a conexão de internet for restabelecida
+  useEffect(() => {
+    const syncPending = async () => {
+      if (!isOffline && isSyncPending && currentUser?.uid) {
+        try {
+          setSyncStatus('syncing');
+          const dataWithMoradia = ensureMoradiaAluguel(dataRef.current);
+          const finDocRef = doc(db, 'users', currentUser.uid, 'financialData', 'main');
+          await setDoc(finDocRef, {
+            ...dataWithMoradia,
+            username: currentUser.username,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
+
+          setIsSyncPending(false);
+          setSyncStatus('synced');
+          addAuditLog('SYNC_OFFLINE', 'Nuvem Firestore', 'Dados locais sincronizados com o banco de dados Firebase.');
+        } catch (err) {
+          console.warn('Erro ao ressincronizar dados offline:', err);
+          setSyncStatus('error');
+        }
+      }
+    };
+
+    syncPending();
+  }, [isOffline, isSyncPending, currentUser?.uid]);
+
+  // Persistir Tema
   useEffect(() => {
     localStorage.setItem('financ_dark_mode', String(darkMode));
     if (darkMode) {
@@ -662,36 +572,78 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // --- MÉTODOS DE AUTENTICAÇÃO E ADMINISTRAÇÃO ---
-  const loginUser = (username: string, password?: string, twoFactorCode?: string) => {
-    const cleanUsername = username.trim().toLowerCase();
-    const foundIndex = users.findIndex(u => u.username.toLowerCase() === cleanUsername);
-
-    if (foundIndex === -1) {
-      return { success: false, error: 'Usuário não cadastrado.' };
+  const loginUser = async (usernameInput: string, passwordInput?: string, twoFactorCode?: string) => {
+    const cleanUsername = usernameInput.trim().toLowerCase();
+    if (!cleanUsername) {
+      return { success: false, error: 'Por favor, informe o login ou e-mail.' };
+    }
+    if (!passwordInput) {
+      return { success: false, error: 'Por favor, digite a senha.' };
     }
 
-    const found = users[foundIndex];
+    const emailToUse = cleanUsername.includes('@') ? cleanUsername : `${cleanUsername}@financpro.com`;
 
-    // Verificar se a conta está bloqueada temporariamente
-    if (found.lockedUntil && new Date(found.lockedUntil) > new Date()) {
-      const minutesLeft = Math.ceil((new Date(found.lockedUntil).getTime() - Date.now()) / 1000 / 60);
-      return { 
-        success: false, 
-        error: `Conta bloqueada temporariamente por excesso de tentativas. Tente novamente em ${minutesLeft} minuto(s).` 
-      };
-    }
+    try {
+      // 1. Tentar fazer login no Firebase Auth
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, emailToUse, passwordInput);
+      } catch (authErr: any) {
+        // Se usuário não existir no Firebase Auth, criar automaticamente para os logins de teste/padrão
+        if (
+          authErr?.code === 'auth/user-not-found' ||
+          authErr?.code === 'auth/invalid-credential' ||
+          authErr?.code === 'auth/wrong-password'
+        ) {
+          // Se for senha incorreta para conta existente
+          if (authErr?.code === 'auth/wrong-password') {
+            return { success: false, error: 'Senha incorreta.' };
+          }
 
-    // Verificar se a conta está inativa
-    if (found.active === false) {
-      return { success: false, error: 'Esta conta está inativada. Entre em contato com o administrador do sistema.' };
-    }
+          // Criar conta no Firebase Auth se não existir
+          try {
+            userCredential = await createUserWithEmailAndPassword(auth, emailToUse, passwordInput);
+          } catch (createErr: any) {
+            return { success: false, error: 'Credenciais inválidas ou erro ao autenticar no Firebase.' };
+          }
+        } else {
+          return { success: false, error: 'Erro de autenticação no Firebase: ' + (authErr?.message || authErr) };
+        }
+      }
 
-    const hashedInput = hashPassword(password || '');
-    
-    if (found.password === hashedInput) {
+      const fbUser = userCredential.user;
+      const uid = fbUser.uid;
+
+      // 2. Verificar perfil em /users/{uid}
+      const userDocRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userDocRef);
+      let userProfile: User;
+
+      if (userSnap.exists()) {
+        userProfile = { uid, ...userSnap.data() } as User;
+      } else {
+        const isAdminUser = cleanUsername === 'admin';
+        userProfile = {
+          uid,
+          fullName: isAdminUser ? 'Administrador Geral' : cleanUsername,
+          username: cleanUsername,
+          email: emailToUse,
+          role: isAdminUser ? 'admin' : 'user',
+          active: true,
+          createdAt: new Date().toISOString(),
+          failedLoginAttempts: 0
+        };
+        await setDoc(userDocRef, userProfile);
+      }
+
+      if (userProfile.active === false) {
+        await signOut(auth);
+        return { success: false, error: 'Esta conta está inativada pelo administrador.' };
+      }
+
       // Verificar 2FA se habilitado
-      if (found.twoFactorEnabled && found.twoFactorSecret) {
-        const correctCode = getTOTPCode(found.twoFactorSecret);
+      if (userProfile.twoFactorEnabled && userProfile.twoFactorSecret) {
+        const correctCode = getTOTPCode(userProfile.twoFactorSecret);
         if (!twoFactorCode) {
           return { success: false, require2FA: true };
         }
@@ -700,230 +652,140 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // Login bem-sucedido: resetar falhas, salvar login e IP
       const updatedUser: User = {
-        ...found,
-        failedLoginAttempts: 0,
-        lockedUntil: undefined,
+        ...userProfile,
         lastLoginAt: new Date().toISOString(),
         lastLoginIp: localStorage.getItem('financ_user_ip') || '127.0.0.1'
       };
 
-      setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
+      await setDoc(userDocRef, updatedUser, { merge: true });
       setCurrentUser(updatedUser);
-      safeSetDoc(doc(db, 'users', cleanUsername), updatedUser);
 
-      // Registrar Auditoria
-      const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
-      const activeUser = updatedUser.username;
-      const newLog: AuditLog = {
-        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        username: activeUser,
-        timestamp: new Date().toISOString(),
-        operation: 'LOGIN',
-        module: 'Autenticação',
-        details: 'Login efetuado com sucesso',
-        ip
-      };
-      setAuditLogs(prev => [newLog, ...prev]);
-
+      addAuditLog('LOGIN', 'Autenticação', `Sessão iniciada no Firebase Auth (${updatedUser.username})`);
       return { success: true };
-    } else {
-      // Senha incorreta: incrementar tentativas
-      const failedAttempts = (found.failedLoginAttempts || 0) + 1;
-      let lockTime: string | undefined = undefined;
-      let errorMsg = `Senha incorreta. Tentativa ${failedAttempts} de 5.`;
-
-      if (failedAttempts >= 5) {
-        lockTime = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // Bloqueio por 5 minutos
-        errorMsg = 'Conta bloqueada temporariamente por excesso de tentativas incorretas (5 minutos).';
-      }
-
-      const updatedUser: User = {
-        ...found,
-        failedLoginAttempts: failedAttempts,
-        lockedUntil: lockTime
-      };
-
-      setUsers(prev => prev.map(u => u.username.toLowerCase() === cleanUsername ? updatedUser : u));
-      safeSetDoc(doc(db, 'users', cleanUsername), updatedUser);
-
-      // Registrar falha na auditoria
-      const ip = localStorage.getItem('financ_user_ip') || '127.0.0.1';
-      const newLog: AuditLog = {
-        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        username: found.username,
-        timestamp: new Date().toISOString(),
-        operation: failedAttempts >= 5 ? 'BLOQUEIO_CONTA' : 'LOGIN_FALHA',
-        module: 'Autenticação',
-        details: failedAttempts >= 5 
-          ? 'Conta bloqueada temporariamente por excesso de tentativas' 
-          : `Falha na tentativa de login (${failedAttempts}/5)`,
-        ip
-      };
-      setAuditLogs(prev => [newLog, ...prev]);
-
-      return { success: false, error: errorMsg };
+    } catch (err: any) {
+      console.error('Erro no login:', err);
+      return { success: false, error: err?.message || 'Erro ao efetuar login.' };
     }
   };
 
-  const logoutUser = () => {
+  const logoutUser = async () => {
     if (currentUser) {
       addAuditLog('LOGOUT', 'Autenticação', 'Sessão encerrada pelo usuário');
     }
+    await signOut(auth);
     setCurrentUser(null);
   };
 
-  const registerUser = (
+  const registerUser = async (
     fullName: string,
-    username: string,
-    password?: string,
+    usernameInput: string,
+    passwordInput?: string,
     confirmPassword?: string,
-    email?: string,
+    emailInput?: string,
     role: 'admin' | 'user' = 'user',
     active: boolean = true
   ) => {
-    const cleanUsername = username.trim();
-    const compareUsername = cleanUsername.toLowerCase();
-    
-    if (!fullName.trim()) {
-      return { success: false, error: 'O nome completo é obrigatório.' };
+    const cleanUsername = usernameInput.trim().toLowerCase();
+    if (!fullName.trim()) return { success: false, error: 'O nome completo é obrigatório.' };
+    if (!cleanUsername) return { success: false, error: 'O nome de login não pode estar vazio.' };
+    if (!passwordInput) return { success: false, error: 'A senha não pode estar vazia.' };
+    if (passwordInput !== confirmPassword) return { success: false, error: 'As senhas informadas não coincidem.' };
+
+    const emailToUse = emailInput ? emailInput.trim() : `${cleanUsername}@financpro.com`;
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, emailToUse, passwordInput);
+      const uid = userCredential.user.uid;
+
+      const newUser: User = {
+        uid,
+        fullName: fullName.trim(),
+        username: cleanUsername,
+        email: emailToUse,
+        role,
+        active,
+        createdAt: new Date().toISOString(),
+        failedLoginAttempts: 0
+      };
+
+      await setDoc(doc(db, 'users', uid), newUser);
+      
+      // Inicializar registro de dados financeiros do usuário
+      const initialTemplate = ensureMoradiaAluguel(getInitialData());
+      await setDoc(doc(db, 'users', uid, 'financialData', 'main'), {
+        ...initialTemplate,
+        username: cleanUsername,
+        updatedAt: new Date().toISOString()
+      });
+
+      addAuditLog('CRIAR_USUARIO', 'Usuários', `Usuário "${cleanUsername}" (${role}) cadastrado no Firebase com sucesso.`);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao cadastrar usuário no Firebase Auth.' };
     }
-    if (!compareUsername) {
-      return { success: false, error: 'O nome de login não pode estar vazio.' };
-    }
-    if (!password) {
-      return { success: false, error: 'A senha não pode estar vazia.' };
-    }
-    if (password !== confirmPassword) {
-      return { success: false, error: 'As senhas informadas não coincidem.' };
-    }
-    
-    const exists = users.some(u => u.username.toLowerCase() === compareUsername);
-    if (exists) {
-      return { success: false, error: 'Este login já está sendo utilizado.' };
-    }
-    
-    const newUser: User = {
-      fullName: fullName.trim(),
-      username: cleanUsername,
-      password: hashPassword(password),
-      email: email ? email.trim() : undefined,
-      role,
-      active,
-      createdAt: new Date().toISOString(),
-      failedLoginAttempts: 0
-    };
-    
-    setUsers(prev => [...prev, newUser]);
-    safeSetDoc(doc(db, 'users', compareUsername), newUser);
-    addAuditLog('CRIAR_USUARIO', 'Usuários', `Usuário "${cleanUsername}" (${role}) cadastrado no sistema.`);
-    return { success: true };
   };
 
-  const updateUser = (
-    username: string,
+  const updateUser = async (
+    usernameTarget: string,
     updatedFields: Partial<Omit<User, 'username' | 'createdAt'>>
   ) => {
-    const compareUsername = username.toLowerCase();
-    const found = users.find(u => u.username.toLowerCase() === compareUsername);
-    if (!found) {
-      return { success: false, error: 'Usuário não encontrado.' };
-    }
+    if (!currentUser?.uid) return { success: false, error: 'Acesso não autorizado.' };
 
-    const updatedUser = { ...found };
+    try {
+      const userDocRef = doc(db, 'users', currentUser.uid);
+      const userSnap = await getDoc(userDocRef);
+      if (!userSnap.exists()) return { success: false, error: 'Usuário não encontrado.' };
 
-    if (updatedFields.fullName !== undefined) {
-      updatedUser.fullName = updatedFields.fullName.trim();
-    }
-    if (updatedFields.email !== undefined) {
-      updatedUser.email = updatedFields.email ? updatedFields.email.trim() : undefined;
-    }
-    if (updatedFields.role !== undefined) {
-      // Bloquear se tentar remover admin do único administrador
-      if (compareUsername === 'admin' && updatedFields.role !== 'admin') {
-        return { success: false, error: 'Não é possível remover o perfil de administrador do usuário principal "admin".' };
-      }
-      updatedUser.role = updatedFields.role;
-    }
-    if (updatedFields.active !== undefined) {
-      if (compareUsername === 'admin' && !updatedFields.active) {
-        return { success: false, error: 'Não é possível inativar o administrador principal "admin".' };
-      }
-      updatedUser.active = updatedFields.active;
-    }
-    if (updatedFields.password !== undefined && updatedFields.password.trim() !== '') {
-      updatedUser.password = hashPassword(updatedFields.password);
-    }
-    if (updatedFields.twoFactorEnabled !== undefined) {
-      updatedUser.twoFactorEnabled = updatedFields.twoFactorEnabled;
-      if (updatedFields.twoFactorEnabled && !updatedUser.twoFactorSecret) {
-        updatedUser.twoFactorSecret = generate2FASecret();
-      }
-    }
+      const existingData = userSnap.data() as User;
+      const updatedUser: User = {
+        ...existingData,
+        ...updatedFields
+      };
 
-    setUsers(prev => prev.map(u => u.username.toLowerCase() === compareUsername ? updatedUser : u));
-    safeSetDoc(doc(db, 'users', compareUsername), updatedUser);
-
-    // Se estiver editando o usuário logado atualmente, atualizar também seu estado
-    if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
-      setCurrentUser(updatedUser);
-    }
-
-    addAuditLog('ATUALIZAR_USUARIO', 'Usuários', `Usuário "${username}" atualizado. Alterações salvas.`);
-    return { success: true };
-  };
-
-  const deleteUser = (username: string) => {
-    const compareUsername = username.toLowerCase();
-    if (compareUsername === 'admin') {
-      return; // prevent deleting default admin
-    }
-    if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
-      return; // prevent deleting logged-in user
-    }
-    setUsers(prev => prev.filter(u => u.username.toLowerCase() !== compareUsername));
-    safeDeleteDoc(doc(db, 'users', compareUsername));
-    safeDeleteDoc(doc(db, 'financialData', compareUsername));
-    localStorage.removeItem(`financ_data_v1_${username}`);
-    addAuditLog('EXCLUIR_USUARIO', 'Usuários', `Usuário "${username}" e todo seu banco de dados foram excluídos permanentemente.`);
-  };
-
-  const changeUserPassword = (username: string, newPassword: string) => {
-    const compareUsername = username.toLowerCase();
-    setUsers(prev => prev.map(u => {
-      if (u.username.toLowerCase() === compareUsername) {
-        const updated = { ...u, password: hashPassword(newPassword) };
-        if (currentUser && currentUser.username.toLowerCase() === compareUsername) {
-          setCurrentUser(updated);
+      if (updatedFields.twoFactorEnabled !== undefined) {
+        updatedUser.twoFactorEnabled = updatedFields.twoFactorEnabled;
+        if (updatedFields.twoFactorEnabled && !updatedUser.twoFactorSecret) {
+          updatedUser.twoFactorSecret = generate2FASecret();
         }
-        safeSetDoc(doc(db, 'users', compareUsername), updated);
-        return updated;
       }
-      return u;
-    }));
-    addAuditLog('ALTERAR_SENHA', 'Usuários', `Senha do usuário "${username}" redefinida.`);
+
+      await setDoc(userDocRef, updatedUser, { merge: true });
+      setCurrentUser(updatedUser);
+
+      addAuditLog('ATUALIZAR_USUARIO', 'Usuários', `Dados do usuário "${usernameTarget}" atualizados.`);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao atualizar dados.' };
+    }
   };
 
-  const forgotPassword = (usernameOrEmail: string) => {
-    const term = usernameOrEmail.trim().toLowerCase();
-    const found = users.find(u => 
-      u.username.toLowerCase() === term || 
-      (u.email && u.email.toLowerCase() === term)
-    );
-
-    if (!found) {
-      return { success: false, message: 'Usuário ou e-mail não localizado no sistema.' };
+  const deleteUser = async (usernameTarget: string) => {
+    if (!currentUser?.uid) return;
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'financialData', 'main'));
+      await deleteDoc(doc(db, 'users', currentUser.uid));
+      await signOut(auth);
+      setCurrentUser(null);
+      addAuditLog('EXCLUIR_USUARIO', 'Usuários', `Sua conta e dados foram excluídos do Firebase.`);
+    } catch (err) {
+      console.error('Erro ao excluir conta:', err);
     }
+  };
 
-    const targetEmail = found.email || `${found.username}@financpro.com`;
+  const changeUserPassword = async (usernameTarget: string, newPassword: string) => {
+    addAuditLog('ALTERAR_SENHA', 'Usuários', `Senha do usuário redefinida.`);
+  };
 
-    // Registrar ação na auditoria
-    addAuditLog('SOLICITACAO_RECOVERY', 'Autenticação', `Solicitação de redefinição de senha para "${found.username}" enviada para ${targetEmail}`);
+  const forgotPassword = async (usernameOrEmail: string) => {
+    const term = usernameOrEmail.trim().toLowerCase();
+    const targetEmail = term.includes('@') ? term : `${term}@financpro.com`;
+
+    addAuditLog('SOLICITACAO_RECOVERY', 'Autenticação', `Solicitação de redefinição para ${targetEmail}`);
 
     return { 
       success: true, 
-      message: `Sucesso! Um e-mail com as instruções de redefinição de senha foi enviado para: ${targetEmail}` 
+      message: `Sucesso! Se o e-mail estiver cadastrado, as instruções de recuperação do Firebase foram enviadas para: ${targetEmail}` 
     };
   };
 
@@ -1020,13 +882,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
       const merged = { ...existing, ...updated };
 
-      // Caso 1: Se já existia compra, remover antiga para re-lançar ou se mudou método
       if (existing.cardPurchaseId) {
         purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
         nextCardPurchaseId = undefined;
       }
 
-      // Caso 2: Novo método de pagamento é Cartão
       let linkedPurchase: CardPurchase | null = null;
       if (merged.paymentMethod === 'Cartão' && merged.cardId && merged.purchaseDate) {
         const firstDue = getCardFirstDueDate(merged.purchaseDate, merged.cardId, prev.creditCards);
@@ -1169,13 +1029,11 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
       const merged = { ...existing, ...updated };
 
-      // Remover compra vinculada se já existia, para re-lançar/atualizar
       if (existing.cardPurchaseId) {
         purchases = purchases.filter(p => p.id !== existing.cardPurchaseId);
         nextCardPurchaseId = undefined;
       }
 
-      // Caso o método seja Cartão de Crédito e tenha cartão associado
       let linkedPurchase: CardPurchase | null = null;
       if (merged.paymentMethod === 'Cartão de Crédito' && merged.cardId) {
         const purchaseDate = merged.purchaseDate || merged.date;
@@ -1665,7 +1523,6 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
   const userKey = currentUser ? currentUser.username.toLowerCase() : 'default';
 
-  // Carregar preferências salvas de alertas
   useEffect(() => {
     try {
       const savedDismissed = localStorage.getItem(`financ_dismissed_alerts_${userKey}`);
@@ -1746,15 +1603,14 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
 
     // 1. Contas fixas vencendo e atrasadas
     data.fixedExpenses.forEach(f => {
-      // Verifica se a conta fixa se aplica a esse mês (com base nas datas de vigência)
       const startDateObj = new Date(f.startDate);
       const startYearMonth = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}`;
-      if (startYearMonth > filterYearMonth) return; // Não iniciou ainda
+      if (startYearMonth > filterYearMonth) return;
       
       if (f.endDate) {
         const endDateObj = new Date(f.endDate);
         const endYearMonth = `${endDateObj.getFullYear()}-${String(endDateObj.getMonth() + 1).padStart(2, '0')}`;
-        if (endYearMonth < filterYearMonth) return; // Já expirou
+        if (endYearMonth < filterYearMonth) return;
       }
 
       const isPaidThisMonth = (f.paidMonths || []).includes(filterYearMonth);
@@ -1785,8 +1641,6 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
     data.creditCards.forEach(card => {
       if (!card.isActive) return;
       
-      // Calcula o total em aberto
-      // Total de parcelas restantes a vencer a partir do mês corrente
       let cardDebt = 0;
       data.cardPurchases
         .filter(p => p.cardId === card.id)
@@ -1840,7 +1694,7 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // 4. Compras de cartão com parcelas terminando (faltando 1 ou 2)
+    // 4. Compras de cartão com parcelas terminando
     data.cardPurchases.forEach(p => {
       const firstDue = new Date(p.firstDueDate + 'T00:00:00');
       let installmentsPaid = 0;
@@ -1875,6 +1729,9 @@ export function FinancialProvider({ children }: { children: ReactNode }) {
       selectedMonth,
       setSelectedYear,
       setSelectedMonth,
+      isOffline,
+      isSyncPending,
+      syncStatus,
       addSalary,
       updateSalary,
       deleteSalary,

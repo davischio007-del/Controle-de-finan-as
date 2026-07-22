@@ -69,7 +69,9 @@ export default function Login() {
     return () => clearInterval(interval);
   }, [activeUserSecret]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -82,20 +84,26 @@ export default function Login() {
       return;
     }
 
-    const res = loginUser(username, password, require2FA ? twoFactorCode : undefined);
-    
-    if (res.success) {
-      // Login bem sucedido
-      return;
-    }
+    setIsLoading(true);
+    try {
+      const res = await loginUser(username, password, require2FA ? twoFactorCode : undefined);
+      
+      if (res.success) {
+        return;
+      }
 
-    if (res.require2FA) {
-      setRequire2FA(true);
-      setError(null);
-      return;
-    }
+      if (res.require2FA) {
+        setRequire2FA(true);
+        setError(null);
+        return;
+      }
 
-    setError(res.error || 'Erro desconhecido ao efetuar login.');
+      setError(res.error || 'Erro desconhecido ao efetuar login.');
+    } catch (err: any) {
+      setError(err?.message || 'Falha de comunicação no login.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleForgotPasswordSubmit = (e: React.FormEvent) => {
@@ -325,10 +333,11 @@ export default function Login() {
               {/* Botão de Envio */}
               <button
                 type="submit"
-                className="w-full py-3 px-4 mt-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
+                disabled={isLoading}
+                className="w-full py-3 px-4 mt-2 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
               >
                 <LogIn className="w-4 h-4" />
-                {require2FA ? 'Confirmar Código 2FA' : 'Entrar no Sistema'}
+                {isLoading ? 'Autenticando no Firebase...' : (require2FA ? 'Confirmar Código 2FA' : 'Entrar no Sistema')}
               </button>
             </form>
 
