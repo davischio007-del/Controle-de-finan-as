@@ -53,6 +53,12 @@ export default function FixedExpenses() {
   const [editingCatName, setEditingCatName] = useState('');
   const [newSubName, setNewSubName] = useState<{ [catId: string]: string }>({});
 
+  // Estados extras para seleção de Grupo Pai e Edição de Subgrupo
+  const [selectedParentCatId, setSelectedParentCatId] = useState<string>('');
+  const [subgroupFormName, setSubgroupFormName] = useState('');
+  const [editingSubgroup, setEditingSubgroup] = useState<{ catId: string; subName: string } | null>(null);
+  const [editingSubgroupValue, setEditingSubgroupValue] = useState('');
+
   // Filtros locais de contas fixas
   const [filterCategory, setFilterCategory] = useState('');
 
@@ -179,9 +185,35 @@ export default function FixedExpenses() {
     const cat = fixedCategories.find(c => c.id === catId);
     if (!cat) return;
 
-    const updatedSubs = [...cat.subcategories, subName.trim()];
-    updateFixedCategory(catId, { subcategories: updatedSubs });
+    if (!cat.subcategories.includes(subName.trim())) {
+      const updatedSubs = [...cat.subcategories, subName.trim()];
+      updateFixedCategory(catId, { subcategories: updatedSubs });
+    }
     setNewSubName(prev => ({ ...prev, [catId]: '' }));
+  };
+
+  const handleAddSubgroupWithParent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedParentCatId || !subgroupFormName.trim()) return;
+    const cat = fixedCategories.find(c => c.id === selectedParentCatId);
+    if (!cat) return;
+
+    if (!cat.subcategories.includes(subgroupFormName.trim())) {
+      const updatedSubs = [...cat.subcategories, subgroupFormName.trim()];
+      updateFixedCategory(selectedParentCatId, { subcategories: updatedSubs });
+    }
+    setSubgroupFormName('');
+  };
+
+  const handleSaveEditSubgroup = (catId: string, oldSubName: string) => {
+    if (!editingSubgroupValue.trim()) return;
+    const cat = fixedCategories.find(c => c.id === catId);
+    if (!cat) return;
+
+    const updatedSubs = cat.subcategories.map(s => s === oldSubName ? editingSubgroupValue.trim() : s);
+    updateFixedCategory(catId, { subcategories: updatedSubs });
+    setEditingSubgroup(null);
+    setEditingSubgroupValue('');
   };
 
   const handleRemoveSubcategory = (catId: string, subNameToRemove: string) => {
@@ -280,24 +312,67 @@ export default function FixedExpenses() {
             <p className="text-xs text-zinc-500 mt-0.5">Crie, edite, exclua ou inative categorias de despesas fixas de forma autônoma.</p>
           </div>
 
-          {/* Cadastro de Categoria */}
-          <form onSubmit={handleAddCategory} className="flex gap-2 max-w-md">
-            <input
-              type="text"
-              required
-              placeholder="Nova Categoria (Ex: Moradia, Assinaturas)"
-              value={newCatName}
-              onChange={(e) => setNewCatName(e.target.value)}
-              className="flex-1 text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-850 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
-            />
-            <button
-              type="submit"
-              className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Criar Categoria
-            </button>
-          </form>
+          {/* Formulários de Cadastro de Grupos e Subgrupos */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-150 dark:border-zinc-800">
+            {/* 1. Criar Grupo (Categoria Principal) */}
+            <form onSubmit={handleAddCategory} className="space-y-2">
+              <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                1. Criar Novo Grupo (Categoria Principal)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Moradia, Assinaturas..."
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  className="flex-1 text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Criar Grupo
+                </button>
+              </div>
+            </form>
+
+            {/* 2. Criar Subgrupo vinculado a um Grupo Pai */}
+            <form onSubmit={handleAddSubgroupWithParent} className="space-y-2">
+              <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                2. Criar Subgrupo (Vincular ao Grupo Pai)
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  required
+                  value={selectedParentCatId}
+                  onChange={(e) => setSelectedParentCatId(e.target.value)}
+                  className="text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                >
+                  <option value="" disabled>Selecione o Grupo Pai...</option>
+                  {activeCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Água, Internet..."
+                  value={subgroupFormName}
+                  onChange={(e) => setSubgroupFormName(e.target.value)}
+                  className="flex-1 text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Criar Subgrupo
+                </button>
+              </div>
+            </form>
+          </div>
 
           {/* Listagem de Categorias */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
@@ -382,37 +457,85 @@ export default function FixedExpenses() {
                 {/* Subcategorias vinculadas */}
                 <div className="border-t border-zinc-100 dark:border-zinc-850 pt-2.5 space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Subcategorias</span>
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Subgrupos Vinculados</span>
+                    <span className="text-[10px] text-zinc-400 font-mono">{cat.subcategories.length} subgrupo(s)</span>
                   </div>
 
-                  {/* Chips de subcategorias */}
+                  {/* Chips de subcategorias com edição e exclusão */}
                   <div className="flex flex-wrap gap-1.5">
                     {cat.subcategories.length === 0 ? (
-                      <span className="text-[10px] text-zinc-400 italic font-medium">Nenhuma subcategoria cadastrada</span>
+                      <span className="text-[10px] text-zinc-400 italic font-medium">Nenhum subgrupo cadastrado</span>
                     ) : (
-                      cat.subcategories.map(sub => (
-                        <span 
-                          key={sub}
-                          className="inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] font-semibold"
-                        >
-                          {sub}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveSubcategory(cat.id, sub)}
-                            className="text-zinc-400 hover:text-rose-500 rounded-sm focus:outline-hidden"
+                      cat.subcategories.map(sub => {
+                        const isEditingThisSub = editingSubgroup?.catId === cat.id && editingSubgroup?.subName === sub;
+                        if (isEditingThisSub) {
+                          return (
+                            <div key={sub} className="inline-flex items-center gap-1 p-0.5 px-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editingSubgroupValue}
+                                onChange={(e) => setEditingSubgroupValue(e.target.value)}
+                                className="text-[10px] p-0.5 bg-white dark:bg-zinc-900 border rounded text-zinc-800 dark:text-zinc-100 w-24 outline-hidden"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditSubgroup(cat.id, sub)}
+                                className="p-0.5 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded"
+                                title="Salvar"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSubgroup(null)}
+                                className="p-0.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded"
+                                title="Cancelar"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <span 
+                            key={sub}
+                            className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] font-semibold border border-zinc-200 dark:border-zinc-800"
                           >
-                            <X className="w-2.5 h-2.5" />
-                          </button>
-                        </span>
-                      ))
+                            <span>{sub}</span>
+                            <div className="flex items-center gap-0.5 border-l border-zinc-200 dark:border-zinc-800 pl-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSubgroup({ catId: cat.id, subName: sub });
+                                  setEditingSubgroupValue(sub);
+                                }}
+                                className="p-0.5 text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded focus:outline-hidden"
+                                title="Editar subgrupo"
+                              >
+                                <Edit2 className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSubcategory(cat.id, sub)}
+                                className="p-0.5 text-zinc-400 hover:text-rose-500 rounded focus:outline-hidden"
+                                title="Excluir subgrupo"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          </span>
+                        );
+                      })
                     )}
                   </div>
 
-                  {/* Adicionar Subcategoria */}
+                  {/* Adicionar Subcategoria Rápido */}
                   <div className="flex gap-1 pt-1">
                     <input
                       type="text"
-                      placeholder="Nova subcategoria..."
+                      placeholder="Adicionar subgrupo aqui..."
                       value={newSubName[cat.id] || ''}
                       onChange={(e) => setNewSubName(prev => ({ ...prev, [cat.id]: e.target.value }))}
                       className="text-[10px] p-1 px-2 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 rounded-md flex-1 outline-hidden"
@@ -420,7 +543,8 @@ export default function FixedExpenses() {
                     <button
                       type="button"
                       onClick={() => handleAddSubcategory(cat.id)}
-                      className="p-1 bg-zinc-100 hover:bg-indigo-50 dark:bg-zinc-900 text-indigo-600 rounded-md"
+                      className="p-1 bg-zinc-100 hover:bg-indigo-50 dark:bg-zinc-900 text-indigo-600 rounded-md cursor-pointer"
+                      title="Adicionar Subgrupo"
                     >
                       <PlusCircle className="w-4 h-4" />
                     </button>

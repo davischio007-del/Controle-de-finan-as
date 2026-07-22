@@ -5,8 +5,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useFinancial } from '../context/FinancialContext';
-import { VariableExpense, CreditCard } from '../types';
-import { Plus, Trash, Edit2, Check, X, Receipt, Filter, Search, Sparkles, PlusCircle, CreditCard as CardIcon } from 'lucide-react';
+import { VariableExpense, ExpenseCategory, CreditCard } from '../types';
+import { 
+  Plus, Trash, Edit2, Check, X, Receipt, Filter, Search, Sparkles, 
+  PlusCircle, CreditCard as CardIcon, Settings, Power, Tag 
+} from 'lucide-react';
 
 const calculateCardFirstDueDate = (purchaseDateStr: string, cardId: string, creditCards: CreditCard[]): string => {
   const card = creditCards.find(c => c.id === cardId);
@@ -32,45 +35,56 @@ const calculateCardFirstDueDate = (purchaseDateStr: string, cardId: string, cred
 };
 
 export default function VariableExpenses() {
-  const { data, addVariableExpense, updateVariableExpense, deleteVariableExpense, selectedYear, selectedMonth } = useFinancial();
+  const { 
+    data, 
+    addVariableExpense, 
+    updateVariableExpense, 
+    deleteVariableExpense, 
+    selectedYear, 
+    selectedMonth,
+    addVariableCategory,
+    updateVariableCategory,
+    deleteVariableCategory
+  } = useFinancial();
 
-  // Estados de formulário
+  // Estados de controle do Gerenciador de Categorias/Subgrupos
+  const [showCatManager, setShowCatManager] = useState(false);
+
+  // Estados de formulário de Despesas
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [formCategory, setFormCategory] = useState('Mercado');
-  const [formSubcategory, setFormSubcategory] = useState('Alimentação');
+  const [formCategory, setFormCategory] = useState('');
+  const [formSubcategory, setFormSubcategory] = useState('');
   const [formValue, setFormValue] = useState<number | ''>('');
   const [formDate, setFormDate] = useState('');
   const [formDesc, setFormDesc] = useState('');
   const [formPayMethod, setFormPayMethod] = useState('Dinheiro');
 
-  // Novos estados para integração de Cartão de Crédito
+  // Estados para integração de Cartão de Crédito
   const [formCardId, setFormCardId] = useState('');
   const [formPurchaseDate, setFormPurchaseDate] = useState('');
   const [formInstallments, setFormInstallments] = useState<number | ''>(1);
   const [formFirstDueDate, setFormFirstDueDate] = useState('');
   const [formObservation, setFormObservation] = useState('');
 
+  // Estados do Gerenciador de Categorias & Subgrupos
+  const [newCatName, setNewCatName] = useState('');
+  const [editingCatId, setEditingCatId] = useState<string | null>(null);
+  const [editingCatName, setEditingCatName] = useState('');
+  const [newSubName, setNewSubName] = useState<{ [catId: string]: string }>({});
+
+  const [selectedParentCatId, setSelectedParentCatId] = useState<string>('');
+  const [subgroupFormName, setSubgroupFormName] = useState('');
+  const [editingSubgroup, setEditingSubgroup] = useState<{ catId: string; subName: string } | null>(null);
+  const [editingSubgroupValue, setEditingSubgroupValue] = useState('');
+
   // Filtros locais
   const [filterCategory, setFilterCategory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Estrutura de subcategorias padrões
-  const subcategoryMap: { [key: string]: string[] } = {
-    'Casa': ['Água', 'Luz', 'Gás', 'Internet', 'Reparos / Manutenção', 'Móveis / Decoração', 'Outros'],
-    'Mercado': ['Alimentação', 'Limpeza', 'Higiene', 'Feira / Sacolão', 'Bebidas', 'Outros'],
-    'Farmácia': ['Medicamentos', 'Cosméticos', 'Higiene Especial', 'Outros'],
-    'Veículo': ['Combustível', 'Seguro', 'Oficina', 'IPVA', 'Pedágio / Estacionamento', 'Outros'],
-    'Viagem': ['Hospedagem', 'Passagens', 'Alimentação em Viagem', 'Passeios', 'Outros'],
-    'Lazer': ['Restaurante / Bar', 'Cinema / Teatro', 'Festas / Shows', 'Esportes', 'Outros'],
-    'Impostos': ['IPTU', 'IPVA', 'IRPF', 'Taxas Diversas', 'Outros'],
-    'Educação': ['Cursos', 'Livros', 'Material Escolar', 'Mensalidade', 'Outros'],
-    'Saúde': ['Consulta Médica', 'Exames', 'Dentista', 'Plano de Saúde', 'Outros'],
-    'Pets': ['Ração', 'Veterinário', 'Brinquedos / Petiscos', 'Banho e Tosa', 'Outros'],
-    'Outros': ['Diversos', 'Presentes', 'Tarifas Bancárias', 'Outros']
-  };
-
-  const categories = Object.keys(subcategoryMap);
+  // Obter categorias salvas no contexto
+  const variableCategories = data.variableCategories || [];
+  const activeCategories = variableCategories.filter(c => c.isActive);
 
   const paymentMethods = [
     'Dinheiro',
@@ -82,6 +96,28 @@ export default function VariableExpenses() {
   ];
 
   const activeCards = data.creditCards.filter(c => c.isActive);
+
+  // Selecionar primeira categoria e subcategoria ativa se vazias
+  useEffect(() => {
+    if (activeCategories.length > 0 && !formCategory) {
+      const firstCat = activeCategories[0];
+      setFormCategory(firstCat.name);
+      if (firstCat.subcategories.length > 0) {
+        setFormSubcategory(firstCat.subcategories[0]);
+      }
+    }
+  }, [activeCategories, formCategory]);
+
+  // Sincronizar subcategoria quando muda a categoria no form
+  const handleCategoryChange = (catName: string) => {
+    setFormCategory(catName);
+    const cat = variableCategories.find(c => c.name === catName);
+    if (cat && cat.subcategories.length > 0) {
+      setFormSubcategory(cat.subcategories[0]);
+    } else {
+      setFormSubcategory('');
+    }
+  };
 
   // Define um cartão padrão ao selecionar Cartão de Crédito
   useEffect(() => {
@@ -108,14 +144,6 @@ export default function VariableExpenses() {
     }
   }, [formPayMethod, formCardId, formPurchaseDate, formDate, data.creditCards]);
 
-  // Sincroniza subcategoria padrão ao mudar categoria no form
-  useEffect(() => {
-    const subs = subcategoryMap[formCategory] || [];
-    if (subs.length > 0 && !subs.includes(formSubcategory)) {
-      setFormSubcategory(subs[0]);
-    }
-  }, [formCategory]);
-
   const handleStartEdit = (v: VariableExpense) => {
     setEditingId(v.id);
     setFormCategory(v.category);
@@ -132,8 +160,10 @@ export default function VariableExpenses() {
   };
 
   const resetForm = () => {
-    setFormCategory('Mercado');
-    setFormSubcategory('Alimentação');
+    const firstCat = activeCategories[0]?.name || '';
+    setFormCategory(firstCat);
+    const catObj = activeCategories.find(c => c.name === firstCat);
+    setFormSubcategory(catObj?.subcategories?.[0] || '');
     setFormValue('');
     setFormDate('');
     setFormDesc('');
@@ -148,16 +178,16 @@ export default function VariableExpenses() {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formCategory || !formSubcategory || !formValue || !formDate || !formDesc) return;
+    if (!formCategory || !formValue || !formDate || !formDesc) return;
 
     const expenseData = {
       category: formCategory,
-      subcategory: formSubcategory,
+      subcategory: formSubcategory || '',
       value: Number(formValue),
       date: formDate,
       description: formDesc,
       paymentMethod: formPayMethod,
-      // Campos adicionais integrados para Cartão de Crédito
+      // Campos adicionais para Cartão de Crédito
       ...(formPayMethod === 'Cartão de Crédito' ? {
         cardId: formCardId,
         purchaseDate: formPurchaseDate || formDate,
@@ -181,6 +211,74 @@ export default function VariableExpenses() {
     resetForm();
   };
 
+  // --- Operações de Grupos e Subgrupos ---
+  const handleAddCategory = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+    addVariableCategory({
+      name: newCatName.trim(),
+      isActive: true,
+      subcategories: []
+    });
+    setNewCatName('');
+  };
+
+  const handleSaveEditCategory = (id: string) => {
+    if (!editingCatName.trim()) return;
+    updateVariableCategory(id, { name: editingCatName.trim() });
+    setEditingCatId(null);
+    setEditingCatName('');
+  };
+
+  const handleToggleCategoryActive = (cat: ExpenseCategory) => {
+    updateVariableCategory(cat.id, { isActive: !cat.isActive });
+  };
+
+  const handleAddSubcategory = (catId: string) => {
+    const subName = newSubName[catId];
+    if (!subName || !subName.trim()) return;
+    const cat = variableCategories.find(c => c.id === catId);
+    if (!cat) return;
+
+    if (!cat.subcategories.includes(subName.trim())) {
+      const updatedSubs = [...cat.subcategories, subName.trim()];
+      updateVariableCategory(catId, { subcategories: updatedSubs });
+    }
+    setNewSubName(prev => ({ ...prev, [catId]: '' }));
+  };
+
+  const handleAddSubgroupWithParent = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedParentCatId || !subgroupFormName.trim()) return;
+    const cat = variableCategories.find(c => c.id === selectedParentCatId);
+    if (!cat) return;
+
+    if (!cat.subcategories.includes(subgroupFormName.trim())) {
+      const updatedSubs = [...cat.subcategories, subgroupFormName.trim()];
+      updateVariableCategory(selectedParentCatId, { subcategories: updatedSubs });
+    }
+    setSubgroupFormName('');
+  };
+
+  const handleSaveEditSubgroup = (catId: string, oldSubName: string) => {
+    if (!editingSubgroupValue.trim()) return;
+    const cat = variableCategories.find(c => c.id === catId);
+    if (!cat) return;
+
+    const updatedSubs = cat.subcategories.map(s => s === oldSubName ? editingSubgroupValue.trim() : s);
+    updateVariableCategory(catId, { subcategories: updatedSubs });
+    setEditingSubgroup(null);
+    setEditingSubgroupValue('');
+  };
+
+  const handleRemoveSubcategory = (catId: string, subNameToRemove: string) => {
+    const cat = variableCategories.find(c => c.id === catId);
+    if (!cat) return;
+
+    const updatedSubs = cat.subcategories.filter(s => s !== subNameToRemove);
+    updateVariableCategory(catId, { subcategories: updatedSubs });
+  };
+
   // Filtragem
   const filterYM = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
   const filteredExpenses = data.variableExpenses.filter(v => {
@@ -194,6 +292,10 @@ export default function VariableExpenses() {
   });
 
   const totalVariableThisMonth = filteredExpenses.reduce((sum, v) => sum + v.value, 0);
+
+  // Subcategorias disponíveis para o formulário
+  const currentFormCatObj = variableCategories.find(c => c.name === formCategory);
+  const currentSubcategories = currentFormCatObj ? currentFormCatObj.subcategories : [];
 
   return (
     <div id="variable-expenses-panel" className="space-y-6">
@@ -226,6 +328,270 @@ export default function VariableExpenses() {
         </div>
       </div>
 
+      {/* Botão para Gerenciador de Grupos e Subgrupos */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowCatManager(!showCatManager)}
+          id="btn-toggle-variable-category-manager"
+          className="flex items-center gap-2 px-4 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-200 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all cursor-pointer"
+        >
+          <Settings className="w-4 h-4 text-indigo-500" />
+          {showCatManager ? "Fechar Configuração de Grupos" : "Gerenciar Grupos & Subgrupos"}
+        </button>
+      </div>
+
+      {/* Painel do Gerenciador de Grupos e Subgrupos */}
+      {showCatManager && (
+        <div id="variable-category-manager-section" className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-6 rounded-2xl shadow-xs space-y-6">
+          <div className="border-b border-zinc-100 dark:border-zinc-850 pb-3">
+            <h3 className="text-sm font-black text-zinc-800 dark:text-zinc-100">Configuração de Grupos e Subgrupos - Contas Variáveis</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Crie, edite, exclua ou organize os grupos (categorias principais) e subgrupos vinculados.</p>
+          </div>
+
+          {/* Formulários de Cadastro de Grupos e Subgrupos */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-50 dark:bg-zinc-900/50 p-4 rounded-xl border border-zinc-150 dark:border-zinc-800">
+            {/* 1. Criar Grupo (Categoria Principal) */}
+            <form onSubmit={handleAddCategory} className="space-y-2">
+              <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                1. Criar Novo Grupo (Categoria Principal)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Alimentação, Transporte, Saúde..."
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  className="flex-1 text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Criar Grupo
+                </button>
+              </div>
+            </form>
+
+            {/* 2. Criar Subgrupo vinculado a um Grupo Pai */}
+            <form onSubmit={handleAddSubgroupWithParent} className="space-y-2">
+              <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                2. Criar Subgrupo (Vincular ao Grupo Pai)
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  required
+                  value={selectedParentCatId}
+                  onChange={(e) => setSelectedParentCatId(e.target.value)}
+                  className="text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
+                >
+                  <option value="" disabled>Selecione o Grupo Pai...</option>
+                  {activeCategories.map(cat => (
+                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Supermercado, Restaurante..."
+                  value={subgroupFormName}
+                  onChange={(e) => setSubgroupFormName(e.target.value)}
+                  className="flex-1 text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500 font-medium"
+                />
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 rounded-lg shrink-0 flex items-center gap-1 cursor-pointer shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Criar Subgrupo
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Listagem de Grupos */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+            {variableCategories.map(cat => (
+              <div 
+                key={cat.id} 
+                className={`p-4 border rounded-xl space-y-3 transition-colors ${
+                  cat.isActive 
+                    ? 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/20' 
+                    : 'border-zinc-100 dark:border-zinc-900 bg-zinc-100/10 opacity-75'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  {editingCatId === cat.id ? (
+                    <div className="flex items-center gap-1.5 flex-1">
+                      <input
+                        type="text"
+                        value={editingCatName}
+                        onChange={(e) => setEditingCatName(e.target.value)}
+                        className="text-xs p-1 px-2 border rounded-md border-indigo-300 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 flex-1 outline-hidden"
+                      />
+                      <button
+                        onClick={() => handleSaveEditCategory(cat.id)}
+                        className="p-1 text-emerald-600 hover:bg-emerald-50 rounded"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => setEditingCatId(null)}
+                        className="p-1 text-zinc-400 hover:bg-zinc-50 rounded"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Tag className={`w-3.5 h-3.5 ${cat.isActive ? 'text-indigo-500' : 'text-zinc-400'}`} />
+                      <span className={`text-xs font-black ${cat.isActive ? 'text-zinc-800 dark:text-zinc-100' : 'line-through text-zinc-400'}`}>
+                        {cat.name}
+                      </span>
+                      <span className={`text-[8px] px-1 rounded-sm font-bold uppercase ${
+                        cat.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500'
+                      }`}>
+                        {cat.isActive ? 'Ativa' : 'Inativa'}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Botão de Ativar/Inativar */}
+                    <button
+                      onClick={() => handleToggleCategoryActive(cat)}
+                      title={cat.isActive ? "Inativar Grupo" : "Ativar Grupo"}
+                      className={`p-1.5 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${
+                        cat.isActive ? 'text-emerald-600' : 'text-zinc-400'
+                      }`}
+                    >
+                      <Power className="w-3.5 h-3.5" />
+                    </button>
+                    
+                    {/* Botão de Editar Nome */}
+                    <button
+                      onClick={() => {
+                        setEditingCatId(cat.id);
+                        setEditingCatName(cat.name);
+                      }}
+                      className="p-1.5 text-zinc-400 hover:text-indigo-600 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Botão de Deletar */}
+                    <button
+                      onClick={() => deleteVariableCategory(cat.id)}
+                      className="p-1.5 text-zinc-400 hover:text-rose-600 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <Trash className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Subgrupos vinculados */}
+                <div className="border-t border-zinc-100 dark:border-zinc-850 pt-2.5 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Subgrupos Vinculados</span>
+                    <span className="text-[10px] text-zinc-400 font-mono">{cat.subcategories.length} subgrupo(s)</span>
+                  </div>
+
+                  {/* Chips de subgrupos com suporte a edição e exclusão */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {cat.subcategories.length === 0 ? (
+                      <span className="text-[10px] text-zinc-400 italic font-medium">Nenhum subgrupo cadastrado</span>
+                    ) : (
+                      cat.subcategories.map(sub => {
+                        const isEditingThisSub = editingSubgroup?.catId === cat.id && editingSubgroup?.subName === sub;
+                        if (isEditingThisSub) {
+                          return (
+                            <div key={sub} className="inline-flex items-center gap-1 p-0.5 px-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={editingSubgroupValue}
+                                onChange={(e) => setEditingSubgroupValue(e.target.value)}
+                                className="text-[10px] p-0.5 bg-white dark:bg-zinc-900 border rounded text-zinc-800 dark:text-zinc-100 w-24 outline-hidden"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEditSubgroup(cat.id, sub)}
+                                className="p-0.5 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded"
+                                title="Salvar"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingSubgroup(null)}
+                                className="p-0.5 text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800 rounded"
+                                title="Cancelar"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <span 
+                            key={sub}
+                            className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 text-[10px] font-semibold border border-zinc-200 dark:border-zinc-800"
+                          >
+                            <span>{sub}</span>
+                            <div className="flex items-center gap-0.5 border-l border-zinc-200 dark:border-zinc-800 pl-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSubgroup({ catId: cat.id, subName: sub });
+                                  setEditingSubgroupValue(sub);
+                                }}
+                                className="p-0.5 text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded focus:outline-hidden"
+                                title="Editar subgrupo"
+                              >
+                                <Edit2 className="w-2.5 h-2.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveSubcategory(cat.id, sub)}
+                                className="p-0.5 text-zinc-400 hover:text-rose-500 rounded focus:outline-hidden"
+                                title="Excluir subgrupo"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          </span>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Adicionar Subgrupo Rápido */}
+                  <div className="flex gap-1 pt-1">
+                    <input
+                      type="text"
+                      placeholder="Adicionar subgrupo aqui..."
+                      value={newSubName[cat.id] || ''}
+                      onChange={(e) => setNewSubName(prev => ({ ...prev, [cat.id]: e.target.value }))}
+                      className="text-[10px] p-1 px-2 border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 rounded-md flex-1 outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddSubcategory(cat.id)}
+                      className="p-1 bg-zinc-100 hover:bg-indigo-50 dark:bg-zinc-900 text-indigo-600 rounded-md cursor-pointer"
+                      title="Adicionar Subgrupo"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Grid Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Lado Esquerdo: Lista de Compras */}
@@ -235,7 +601,7 @@ export default function VariableExpenses() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4 border-b border-zinc-100 dark:border-zinc-850 pb-4">
               <div>
                 <h3 className="text-sm font-bold text-zinc-800 dark:text-zinc-200">Despesas Variáveis (Gastos Livres)</h3>
-                <p className="text-xs text-zinc-500">Registro detalhado de despesas de consumo flexível</p>
+                <p className="text-xs text-zinc-500">Registro detalhado de despesas de consumo flexível por Grupo e Subgrupo</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -257,8 +623,8 @@ export default function VariableExpenses() {
                   id="filter-variable-category"
                   className="text-xs p-1.5 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 outline-hidden focus:border-indigo-500"
                 >
-                  <option value="">Todas Categorias</option>
-                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="">Todos os Grupos</option>
+                  {variableCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
             </div>
@@ -285,7 +651,11 @@ export default function VariableExpenses() {
                           <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200 truncate">{item.description}</p>
                         </div>
                         <p className="text-[10px] text-zinc-500 mt-1 font-medium">
-                          Categoria: <strong className="text-zinc-700 dark:text-zinc-300">{item.category} ({item.subcategory})</strong> • Pagamento: {item.paymentMethod}
+                          Grupo: <strong className="text-zinc-700 dark:text-zinc-300">{item.category}</strong>
+                          {item.subcategory && (
+                            <> • Subgrupo: <strong className="text-zinc-700 dark:text-zinc-300">{item.subcategory}</strong></>
+                          )}
+                          {' '}• Pagamento: {item.paymentMethod}
                           {associatedCard && (
                             <> • <strong className="text-indigo-600 dark:text-indigo-400">{associatedCard.bank} - {associatedCard.cardName}</strong> ({item.totalInstallments}x)</>
                           )}
@@ -307,14 +677,14 @@ export default function VariableExpenses() {
                           <button
                             onClick={() => handleStartEdit(item)}
                             id={`btn-variable-edit-${item.id}`}
-                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => deleteVariableExpense(item.id)}
                             id={`btn-variable-delete-${item.id}`}
-                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                            className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 transition-colors cursor-pointer"
                           >
                             <Trash className="w-3.5 h-3.5" />
                           </button>
@@ -332,7 +702,7 @@ export default function VariableExpenses() {
         <div className="bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-850 p-5 rounded-2xl shadow-xs h-fit">
           <div className="flex items-center justify-between mb-4 border-b border-zinc-100 dark:border-zinc-850 pb-3">
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-              {editingId ? 'Editar Despesa' : 'Cadastrar Despesa'}
+              {editingId ? 'Editar Despesa Variável' : 'Cadastrar Despesa Variável'}
             </h3>
             {editingId && (
               <button
@@ -350,7 +720,7 @@ export default function VariableExpenses() {
               <input
                 required
                 type="text"
-                placeholder="Ex: Compra de Carnes, Gasolina"
+                placeholder="Ex: Supermercado Mensal, Posto de Gasolina"
                 value={formDesc}
                 onChange={(e) => setFormDesc(e.target.value)}
                 id="input-variable-desc"
@@ -360,28 +730,32 @@ export default function VariableExpenses() {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Categoria</label>
+                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Grupo (Categoria)</label>
                 <select
                   value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value)}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
                   id="select-variable-category"
                   className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
                 >
-                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  {activeCategories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Subcategoria</label>
+                <label className="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Subgrupo</label>
                 <select
                   value={formSubcategory}
                   onChange={(e) => setFormSubcategory(e.target.value)}
                   id="select-variable-subcategory"
                   className="w-full text-xs p-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-100 focus:outline-hidden focus:border-indigo-500"
                 >
-                  {(subcategoryMap[formCategory] || []).map(sub => (
-                    <option key={sub} value={sub}>{sub}</option>
-                  ))}
+                  {currentSubcategories.length === 0 ? (
+                    <option value="">Sem subgrupos</option>
+                  ) : (
+                    currentSubcategories.map(sub => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))
+                  )}
                 </select>
               </div>
             </div>
